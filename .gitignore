@@ -1,0 +1,21 @@
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# IDE / Editor Folders
+.vscode/
+.idea/
+
+# Environment Variables (CRITICAL FOR SECURITY)
+.env
+.env.local
+
+# Node / Javascript (for React/node)
+node_modules/
+npm-debug.log
+
+# Python (for Python/Flask/Django)
+__pycache__/
+*.pyc
+venv/
+env/
