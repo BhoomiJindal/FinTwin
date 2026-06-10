@@ -1,0 +1,103 @@
+from pydantic import BaseModel
+from typing import Optional, List
+from enum import Enum
+
+# ─── ENUMS ────────────────────────────────────────────
+
+class RiskLevel(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+class TransactionType(str, Enum):
+    TRANSFER = "transfer"
+    INVESTMENT = "investment"
+    WITHDRAWAL = "withdrawal"
+    DEPOSIT = "deposit"
+
+class DecisionAction(str, Enum):
+    ALLOW = "ALLOW"
+    CHALLENGE = "CHALLENGE"
+    BLOCK = "BLOCK"
+
+# ─── ASSETS ───────────────────────────────────────────
+
+class Assets(BaseModel):
+    liquid_cash: float = 0.0
+    mutual_funds: float = 0.0
+    gold_grams: float = 0.0
+    real_estate: float = 0.0
+    liabilities: float = 0.0
+
+class MarketData(BaseModel):
+    gold_price_per_gram: float = 7200.0
+    repo_rate: float = 6.50
+    inflation_rate: float = 5.10
+    nifty_pe: float = 22.4
+    fd_rate: float = 7.20
+
+class NetWorthResponse(BaseModel):
+    assets: Assets
+    market_data: MarketData
+    net_worth: float
+    gold_value: float
+    total_assets: float
+
+# ─── TRANSACTIONS ─────────────────────────────────────
+
+class TransactionRequest(BaseModel):
+    amount: float
+    transaction_type: TransactionType
+    recipient: Optional[str] = None
+    note: Optional[str] = None
+    session_duration_ms: int        # how long user has been on page
+    is_known_device: bool = True    # frontend sends this
+
+class ThreatSignals(BaseModel):
+    device_anomaly: float
+    amount_anomaly: float
+    time_anomaly: float
+    velocity_anomaly: float
+    urgency_anomaly: float
+    recipient_risk: float
+
+class ThreatResponse(BaseModel):
+    threat_score: float
+    action: DecisionAction
+    signals: ThreatSignals
+    message: Optional[str] = None
+    triggered_signals: List[str]    # human-readable explanation
+
+# ─── ADVISOR / CHAT ───────────────────────────────────
+
+class ChatRequest(BaseModel):
+    message: str
+    assets: Assets
+
+class ChatResponse(BaseModel):
+    reply: str
+    shift_logic_triggered: bool = False
+    shift_logic_rule: Optional[str] = None
+
+# ─── SECURITY ─────────────────────────────────────────
+
+class PINRequest(BaseModel):
+    pin: str
+
+class PINResponse(BaseModel):
+    success: bool
+    hash_stored: str                # shows the final hash (not the PIN)
+    cipher_vector: List[int]        # shows the matrix transformation result
+
+# ─── AUDIT ────────────────────────────────────────────
+
+class AuditEntry(BaseModel):
+    timestamp: str
+    action: str
+    threat_score: Optional[float] = None
+    amount: Optional[float] = None
+    outcome: str
+
+class AuditResponse(BaseModel):
+    entries: List[AuditEntry]
+    total_count: int
