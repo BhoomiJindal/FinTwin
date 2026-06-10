@@ -88,33 +88,21 @@ def get_twin():
 
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
-    # Mock response — Claude integration comes in Stage 5
-    mock_reply = (
-        f"Based on your portfolio, you have ₹{request.assets.liquid_cash:,.0f} "
-        f"in liquid cash. I'm analysing your question: '{request.message}'. "
-        f"Full AI reasoning will be active in the next stage."
-    )
+    from advisor import get_ai_advice
 
-    # Check if any shift-logic rule should trigger
-    market = get_market_data()
-    shift_triggered = False
-    shift_rule = None
+    assets_dict = request.assets.model_dump()
+    result = get_ai_advice(request.message, assets_dict)
 
-    if market.fd_rate > 7.0:
-        shift_triggered = True
-        shift_rule = f"FD rates at {market.fd_rate}% — above 7% threshold"
-
-    # Log this interaction
     audit_log.append(AuditEntry(
         timestamp=datetime.now().isoformat(),
         action="CHAT",
-        outcome=f"Query received: {request.message[:50]}"
+        outcome=f"Query: {request.message[:50]}"
     ))
 
     return ChatResponse(
-        reply=mock_reply,
-        shift_logic_triggered=shift_triggered,
-        shift_logic_rule=shift_rule
+        reply=result["reply"],
+        shift_logic_triggered=result["shift_logic_triggered"],
+        shift_logic_rule=result["shift_logic_rule"]
     )
 
 
