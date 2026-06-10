@@ -3,6 +3,10 @@ import anthropic
 from dotenv import load_dotenv
 from typing import Dict, Any
 
+# Stores last 6 messages per session (3 exchanges)
+# Resets on server restart — fine for prototype
+conversation_history = []
+
 load_dotenv()
 
 # ─── CLIENT SETUP ─────────────────────────────────────
@@ -212,21 +216,30 @@ def get_ai_advice(message: str, assets: Dict) -> Dict[str, Any]:
 
     # Try Claude API first — fall back to rule-based if unavailable
     try:
+        # Add user message to history
+        conversation_history.append({
+            "role": "user",
+            "content": f"{portfolio_context}\n\nUser question: {full_message}"
+        })
+
+        # Keep only last 6 messages to stay within context limits
+        trimmed_history = conversation_history[-6:]
+
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=1000,
             system=SYSTEM_PROMPT,
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"{portfolio_context}\n\nUser question: {full_message}"
-                }
-            ]
+            messages=trimmed_history
         )
         reply = response.content[0].text
 
+        # Add assistant reply to history
+        conversation_history.append({
+            "role": "assistant",
+            "content": reply
+        })
+
     except Exception:
-        # Fallback to smart rule-based response
         reply = get_fallback_advice(message, assets, market)
 
     return {

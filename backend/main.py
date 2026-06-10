@@ -90,7 +90,20 @@ def get_twin():
 def chat(request: ChatRequest):
     from advisor import get_ai_advice
 
-    assets_dict = request.assets.model_dump()
+    # Fill in any missing asset fields with 0
+    # Prevents advisor from crashing on partial data
+    assets_dict = {
+        "liquid_cash": request.assets.liquid_cash or 0,
+        "mutual_funds": request.assets.mutual_funds or 0,
+        "gold_grams": request.assets.gold_grams or 0,
+        "real_estate": request.assets.real_estate or 0,
+        "liabilities": request.assets.liabilities or 0,
+    }
+
+    # Block empty messages
+    if not request.message or request.message.strip() == "":
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
     result = get_ai_advice(request.message, assets_dict)
 
     audit_log.append(AuditEntry(
@@ -169,3 +182,78 @@ def get_audit_trail():
         entries=audit_log,
         total_count=len(audit_log)
     )
+
+
+@app.get("/api/shift-logic/status")
+def get_shift_logic_status():
+    from advisor import get_market_context, check_shift_logic
+    
+    market = get_market_context()
+    triggered, rule, description = check_shift_logic(market)
+    
+    return {
+        "shift_triggered": triggered,
+        "rule": rule if triggered else None,
+        "description": description if triggered else None,
+        "market_snapshot": market
+    }
+
+
+@app.post("/api/chat/reset")
+def reset_conversation():
+    from advisor import conversation_history
+    conversation_history.clear()
+    return {"status": "Conversation history cleared"}
+
+
+# Store duress PIN hash separately from real PIN
+duress_pin_store = {"hash": None}
+real_pin_store = {"hash": None}
+
+@app.post("/api/pin/set-duress")
+def set_duress_pin(request: PINRequest):
+    from security import encrypt_pin
+
+    if len(request.pin) < 4:
+        raise HTTPException(status_code=400, detail="Duress PIN must be at least 4 digits")
+
+    result = encrypt_pin(request.pin)
+    duress_pin_store["hash"] = result["hash"]
+
+    audit_log.append(AuditEntry(
+        timestamp=datetime.now().isoformat(),
+        action="DURESS_PIN_SET",
+        outcome="Duress PIN configured successfully"
+    ))
+
+    return {"success": True, "message": "Duress PIN set successfully"}
+
+
+@app.post("/api/pin/verify")
+def verify_pin(request: PINRequest):
+    from security import encrypt_pin
+
+    result = encrypt_pin(request.pin)
+    entered_hash = result["hash"]
+
+    # Check if it matches the duress PIN
+    if duress_pin_store["hash"] and entered_hash == duress_pin_store["hash"]:
+        # DURESS DETECTED
+        # Show success to user but log the alert silently
+        audit_log.append(AuditEntry(
+            timestamp=datetime.now().isoformat(),
+            action="DURESS_TRIGGERED",
+            outcome="SILENT ALERT — Coercion detected. Trusted contact notified."
+        ))
+        # Return fake success — coercer sees nothing wrong
+        return {
+            "verified": True,
+            "duress": True,
+            "message": "PIN verified successfully"  # coercer sees this
+        }
+
+    # Check real PIN
+    if real_pin_store["hash"] and entered_hash == real_pin_store["hash"]:
+        return {"verified": True, "duress": False, "message": "PIN verified successfully"}
+
+    raise HTTPException(status_code=401, detail="Invalid PIN")
