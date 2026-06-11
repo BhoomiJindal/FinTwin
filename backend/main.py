@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
 from datetime import datetime
-
+from property_advisor import analyze_property, get_neighborhood_data
+from simulator import run_counterfactual, compare_all_assets
 from models import (
     Assets, MarketData, NetWorthResponse,
     TransactionRequest, ThreatResponse, ThreatSignals, DecisionAction,
@@ -261,3 +262,76 @@ def verify_pin(request: PINRequest):
         return {"verified": True, "duress": False, "message": "PIN verified successfully"}
 
     raise HTTPException(status_code=401, detail="Invalid PIN")
+
+
+
+# ── Property ZIP Analysis ─────────────────────────────
+
+@app.post("/api/property/analyze")
+def analyze_property_endpoint(
+    property_value: float,
+    zip_code: str,
+    years: int = 5
+):
+    if property_value <= 0:
+        raise HTTPException(status_code=400, detail="Property value must be positive")
+    if len(zip_code) < 5:
+        raise HTTPException(status_code=400, detail="Enter a valid ZIP or PIN code")
+
+    result = analyze_property(property_value, zip_code, years)
+
+    audit_log.append(AuditEntry(
+        timestamp=datetime.now().isoformat(),
+        action="PROPERTY_ANALYSIS",
+        outcome=f"ZIP {zip_code} analyzed — {result['area_name']}"
+    ))
+
+    return result
+
+
+# ── ZIP Code Lookup ───────────────────────────────────
+
+@app.get("/api/property/lookup/{zip_code}")
+def lookup_zip(zip_code: str):
+    data = get_neighborhood_data(zip_code)
+    if not data:
+        return {
+            "found": False,
+            "message": f"ZIP {zip_code} not in database. Using national average of 7% appreciation.",
+            "fallback_rate": 7.0
+        }
+    return {"found": True, **data}
+
+
+# ── Counterfactual Simulator ──────────────────────────
+
+@app.get("/api/simulator/what-if")
+def what_if(
+    amount: float,
+    asset: str,
+    from_year: int = 2019,
+    to_year: int = 2024
+):
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+    if from_year > to_year:
+        raise HTTPException(status_code=400, detail="from_year must be before to_year")
+
+    result = run_counterfactual(amount, asset, from_year, to_year)
+
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    return result
+
+
+@app.get("/api/simulator/compare-all")
+def compare_all(
+    amount: float,
+    from_year: int = 2019,
+    to_year: int = 2024
+):
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+
+    return compare_all_assets(amount, from_year, to_year)
