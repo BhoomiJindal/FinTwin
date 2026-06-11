@@ -44,6 +44,25 @@ def explain_signals(signals: Dict[str, float]) -> list[str]:
         explanations.append("All signals within normal range")
     return explanations
 
+def generate_risk_summary(score: float, action: str, signals: Dict) -> str:
+    dominant = max(signals, key=signals.get)
+    dominant_labels = {
+        "device_anomaly": "an unrecognised device",
+        "amount_anomaly": "an unusually large amount",
+        "time_anomaly": "an unusual transaction hour",
+        "velocity_anomaly": "too many recent transactions",
+        "urgency_anomaly": "suspiciously fast action",
+        "recipient_risk": "an unknown recipient"
+    }
+    dominant_reason = dominant_labels.get(dominant, "unusual behaviour")
+
+    if action == "ALLOW":
+        return f"All signals within normal range. Transaction approved with confidence score {100 - score:.0f}/100."
+    elif action == "CHALLENGE":
+        return f"Transaction flagged primarily due to {dominant_reason}. Identity re-confirmation required before proceeding."
+    else:
+        return f"Transaction blocked. Primary trigger: {dominant_reason}. Score {score}/100 exceeds safety threshold."
+    
 
 # ─── MAIN: 6-SIGNAL THREAT SCORING ───────────────────
 
@@ -137,12 +156,17 @@ def calculate_threat_score(request) -> Dict[str, Any]:
         "score": score
     })
 
+    risk_summary = generate_risk_summary(score, action, signals)
+    cooling_off = 5 if action == "CHALLENGE" else 0
+
     return {
         "score": score,
         "action": action,
         "signals": signals,
         "message": message,
-        "triggered_signals": explain_signals(signals)
+        "triggered_signals": explain_signals(signals),
+        "risk_summary": risk_summary,
+        "cooling_off_seconds": cooling_off
     }
 
 

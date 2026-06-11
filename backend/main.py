@@ -89,9 +89,8 @@ def get_twin():
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
     from advisor import get_ai_advice
+    from models import ReasoningStep
 
-    # Fill in any missing asset fields with 0
-    # Prevents advisor from crashing on partial data
     assets_dict = {
         "liquid_cash": request.assets.liquid_cash or 0,
         "mutual_funds": request.assets.mutual_funds or 0,
@@ -100,11 +99,14 @@ def chat(request: ChatRequest):
         "liabilities": request.assets.liabilities or 0,
     }
 
-    # Block empty messages
     if not request.message or request.message.strip() == "":
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
     result = get_ai_advice(request.message, assets_dict)
+
+    reasoning_steps = [
+        ReasoningStep(**step) for step in result.get("reasoning", [])
+    ]
 
     audit_log.append(AuditEntry(
         timestamp=datetime.now().isoformat(),
@@ -115,7 +117,8 @@ def chat(request: ChatRequest):
     return ChatResponse(
         reply=result["reply"],
         shift_logic_triggered=result["shift_logic_triggered"],
-        shift_logic_rule=result["shift_logic_rule"]
+        shift_logic_rule=result["shift_logic_rule"],
+        reasoning=reasoning_steps
     )
 
 
@@ -126,10 +129,9 @@ def chat(request: ChatRequest):
 @app.post("/api/transaction/verify", response_model=ThreatResponse)
 def verify_transaction(request: TransactionRequest):
     from security import calculate_threat_score
-    
+
     result = calculate_threat_score(request)
 
-    # Log this transaction attempt
     audit_log.append(AuditEntry(
         timestamp=datetime.now().isoformat(),
         action="TRANSACTION",
@@ -143,7 +145,9 @@ def verify_transaction(request: TransactionRequest):
         action=DecisionAction(result["action"]),
         signals=ThreatSignals(**result["signals"]),
         message=result["message"],
-        triggered_signals=result["triggered_signals"]
+        triggered_signals=result["triggered_signals"],
+        risk_summary=result["risk_summary"],
+        cooling_off_seconds=result["cooling_off_seconds"]
     )
 
 

@@ -28,6 +28,94 @@ def get_market_context() -> Dict[str, float]:
     }
 
 
+def extract_reasoning(message: str, assets: Dict, market: Dict) -> list:
+    msg = message.lower()
+    gold_value = assets.get("gold_grams", 0) * market["gold_price_per_gram"]
+    net_worth = (
+        assets.get("liquid_cash", 0) +
+        assets.get("mutual_funds", 0) +
+        gold_value +
+        assets.get("real_estate", 0) -
+        assets.get("liabilities", 0)
+    )
+    gold_pct = round((gold_value / (net_worth + 1)) * 100, 1)
+    cash_pct = round((assets.get("liquid_cash", 0) / (net_worth + 1)) * 100, 1)
+    post_tax_fd = round(market["fd_rate"] * 0.7, 2)
+
+    reasoning = []
+
+    # Always include net worth context
+    reasoning.append({
+        "factor": "Net Worth",
+        "value": f"₹{net_worth:,.0f}",
+        "impact": "Base reference for all allocation advice"
+    })
+
+    if any(w in msg for w in ["gold"]):
+        reasoning.append({
+            "factor": "Gold Allocation",
+            "value": f"{gold_pct}% of portfolio",
+            "impact": "Compared against 10-15% recommended range"
+        })
+        reasoning.append({
+            "factor": "Gold 1yr Return",
+            "value": f"{market['gold_1yr_return']}%",
+            "impact": "Assessed against inflation rate as hedge effectiveness"
+        })
+        reasoning.append({
+            "factor": "Inflation Rate",
+            "value": f"{market['inflation_rate']}%",
+            "impact": "Higher inflation increases gold hedge value"
+        })
+
+    if any(w in msg for w in ["fd", "fixed deposit", "fixed"]):
+        reasoning.append({
+            "factor": "FD Rate",
+            "value": f"{market['fd_rate']}%",
+            "impact": "Gross return before tax"
+        })
+        reasoning.append({
+            "factor": "Post-Tax FD Return",
+            "value": f"{post_tax_fd}%",
+            "impact": "Effective return assuming 30% tax bracket"
+        })
+        reasoning.append({
+            "factor": "Liabilities",
+            "value": f"₹{assets.get('liabilities', 0):,.0f}",
+            "impact": "Loan cost compared against FD return to find better option"
+        })
+
+    if any(w in msg for w in ["mutual fund", "equity", "stock", "nifty"]):
+        reasoning.append({
+            "factor": "NIFTY PE Ratio",
+            "value": str(market["nifty_pe"]),
+            "impact": "Above 22 signals caution for lump-sum investments"
+        })
+        reasoning.append({
+            "factor": "NIFTY 1yr Return",
+            "value": f"{market['nifty_1yr_return']}%",
+            "impact": "Recent market performance context"
+        })
+        reasoning.append({
+            "factor": "Mutual Fund Holdings",
+            "value": f"₹{assets.get('mutual_funds', 0):,.0f}",
+            "impact": "Current equity exposure assessed"
+        })
+
+    if any(w in msg for w in ["cash", "savings", "liquid"]):
+        reasoning.append({
+            "factor": "Liquid Cash",
+            "value": f"₹{assets.get('liquid_cash', 0):,.0f}",
+            "impact": f"{cash_pct}% of net worth — checked against 6-month emergency fund rule"
+        })
+        reasoning.append({
+            "factor": "FD Rate",
+            "value": f"{market['fd_rate']}%",
+            "impact": "Excess cash beyond emergency fund earns this if deployed"
+        })
+
+    return reasoning
+
 # ─── SHIFT LOGIC RULES ────────────────────────────────
 # Rules that trigger proactive AI advice
 # LLM reasons over the trigger + user context
@@ -242,8 +330,11 @@ def get_ai_advice(message: str, assets: Dict) -> Dict[str, Any]:
     except Exception:
         reply = get_fallback_advice(message, assets, market)
 
+    reasoning = extract_reasoning(message, assets, market)
+
     return {
         "reply": reply,
         "shift_logic_triggered": shift_triggered,
-        "shift_logic_rule": shift_rule if shift_triggered else None
+        "shift_logic_rule": shift_rule if shift_triggered else None,
+        "reasoning": reasoning
     }

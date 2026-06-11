@@ -66,7 +66,9 @@ class ThreatResponse(BaseModel):
     action: DecisionAction
     signals: ThreatSignals
     message: Optional[str] = None
-    triggered_signals: List[str]    # human-readable explanation
+    triggered_signals: List[str]
+    risk_summary: str              # one sentence plain English summary
+    cooling_off_seconds: int = 0   # how long to lock UI for CHALLENGE
 
 # ─── ADVISOR / CHAT ───────────────────────────────────
 
@@ -74,10 +76,16 @@ class ChatRequest(BaseModel):
     message: str
     assets: Assets
 
+class ReasoningStep(BaseModel):
+    factor: str        # what was looked at
+    value: str         # the actual number
+    impact: str        # how it affected the advice
+
 class ChatResponse(BaseModel):
     reply: str
     shift_logic_triggered: bool = False
     shift_logic_rule: Optional[str] = None
+    reasoning: Optional[List[ReasoningStep]] = None
 
 # ─── SECURITY ─────────────────────────────────────────
 
