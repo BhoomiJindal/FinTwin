@@ -70,6 +70,7 @@ class ThreatResponse(BaseModel):
     risk_summary: str
     cooling_off_seconds: int = 0
     ai_explanation: Optional[str] = None
+    pattern_detected: Optional[PatternMatch] = None
 
 # ─── ADVISOR / CHAT ───────────────────────────────────
 
@@ -173,3 +174,12 @@ class TaxOptimizationResponse(BaseModel):
     recommendations: List[str]
     deduction_breakdown: dict
     reasoning: List[ReasoningStep]
+
+
+# ─── PREDICTIVE THREAT PATTERNS ───────────────────────
+
+class PatternMatch(BaseModel):
+    pattern_name: str
+    description: str
+    confidence: int       # 0-100, how confident the pattern match is
+    score_bonus: float    # additional points added to threat score

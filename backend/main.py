@@ -12,7 +12,8 @@ from models import (
     PINRequest, PINResponse,
     AuditEntry, AuditResponse,
     UserProfile, ArchetypeResponse, Archetype,
-    TaxProfile, TaxOptimizationResponse
+    TaxProfile, TaxOptimizationResponse,
+    PatternMatch
 )
 from profiler import get_archetype_response, get_archetype_context, classify_archetype
 from tax_engine import optimize_tax
@@ -141,8 +142,18 @@ def chat(request: ChatRequest):
 @app.post("/api/transaction/verify", response_model=ThreatResponse)
 def verify_transaction(request: TransactionRequest):
     from security import calculate_threat_score
+    from models import PatternMatch
 
     result = calculate_threat_score(request)
+
+    pattern_match = None
+    if result["pattern"]:
+        pattern_match = PatternMatch(
+            pattern_name=result["pattern"]["pattern_name"],
+            description=result["pattern"]["description"],
+            confidence=result["pattern"]["confidence"],
+            score_bonus=result["pattern"]["score_bonus"]
+        )
 
     audit_log.append(AuditEntry(
         timestamp=datetime.now().isoformat(),
@@ -160,7 +171,8 @@ def verify_transaction(request: TransactionRequest):
         triggered_signals=result["triggered_signals"],
         risk_summary=result["risk_summary"],
         cooling_off_seconds=result["cooling_off_seconds"],
-        ai_explanation=result["ai_explanation"]
+        ai_explanation=result["ai_explanation"],
+        pattern_detected=pattern_match
     )
 
 

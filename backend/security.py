@@ -114,6 +114,85 @@ def generate_ai_explanation(score: float, action: str, signals: Dict, request) -
         )
     
 
+def detect_fraud_pattern(request, history: list) -> Optional[Dict[str, Any]]:
+    """
+    Looks at the sequence of recent transactions to detect
+    multi-step fraud patterns that single-transaction scoring would miss.
+    """
+    now = time.time()
+
+    # ── Pattern 1: Test transfer followed by large transfer ──
+    # Small amount (under 500) in last 10 minutes, now a large amount
+    recent_10min = [t for t in history if now - t["timestamp"] < 600]
+    small_test_transfers = [t for t in recent_10min if t["amount"] < 500]
+
+    if small_test_transfers and request.amount > 10000:
+        return {
+            "pattern_name": "TEST_THEN_DRAIN",
+            "description": (
+                f"A small test transaction (₹{small_test_transfers[-1]['amount']:,.0f}) "
+                f"was made recently, followed by this much larger transfer "
+                f"(₹{request.amount:,.0f}). This sequence is commonly used to verify "
+                f"a stolen account works before draining it."
+            ),
+            "confidence": 85,
+            "score_bonus": 25.0
+        }
+
+    # ── Pattern 2: Rapid-fire multiple large transactions ──
+    recent_5min = [t for t in history if now - t["timestamp"] < 300]
+    large_recent = [t for t in recent_5min if t["amount"] > 20000]
+
+    if len(large_recent) >= 2 and request.amount > 20000:
+        return {
+            "pattern_name": "RAPID_DRAIN_SEQUENCE",
+            "description": (
+                f"This is the {len(large_recent) + 1}th large transaction "
+                f"(over ₹20,000) attempted within 5 minutes. "
+                f"This rapid sequence is consistent with an attacker "
+                f"attempting to move funds before the account is locked."
+            ),
+            "confidence": 90,
+            "score_bonus": 30.0
+        }
+
+    # ── Pattern 3: New device + immediate large transfer + no recipient ──
+    if (not request.is_known_device and
+        request.amount > 50000 and
+        (not request.recipient or request.recipient.strip() == "")):
+
+        return {
+            "pattern_name": "NEW_DEVICE_IMMEDIATE_LARGE_TRANSFER",
+            "description": (
+                f"A large transfer (₹{request.amount:,.0f}) to an unverified recipient "
+                f"was attempted from a completely new device. "
+                f"This combination — new device, large amount, no recipient verification — "
+                f"matches the profile of credential theft followed by immediate fund extraction."
+            ),
+            "confidence": 95,
+            "score_bonus": 35.0
+        }
+
+    # ── Pattern 4: Escalating amounts over short period ──
+    if len(recent_10min) >= 2:
+        amounts = [t["amount"] for t in recent_10min] + [request.amount]
+        is_escalating = all(amounts[i] < amounts[i+1] for i in range(len(amounts)-1))
+
+        if is_escalating and amounts[-1] > amounts[0] * 5:
+            return {
+                "pattern_name": "ESCALATING_AMOUNT_PATTERN",
+                "description": (
+                    f"Transaction amounts have been escalating rapidly — "
+                    f"from ₹{amounts[0]:,.0f} to ₹{amounts[-1]:,.0f} within 10 minutes. "
+                    f"This escalation pattern often indicates an attacker "
+                    f"testing limits before a final large withdrawal."
+                ),
+                "confidence": 75,
+                "score_bonus": 20.0
+            }
+
+    return None
+
 
 # ─── MAIN: 6-SIGNAL THREAT SCORING ───────────────────
 
@@ -188,6 +267,13 @@ def calculate_threat_score(request) -> Dict[str, Any]:
     )
     score = round(score, 2)
 
+    # ── NEW: Pattern Detection ────────────────────────
+    pattern = detect_fraud_pattern(request, transaction_history)
+
+    if pattern:
+        score = min(score + pattern["score_bonus"], 100)
+        score = round(score, 2)
+
     # ── Decision Gate ─────────────────────────────────
     if score <= 39:
         action = "ALLOW"
@@ -211,6 +297,12 @@ def calculate_threat_score(request) -> Dict[str, Any]:
     cooling_off = 5 if action == "CHALLENGE" else 0
     ai_explanation = generate_ai_explanation(score, action, signals, request)
 
+    # If pattern detected, append pattern info to explanation
+    if pattern and ai_explanation:
+        ai_explanation += f"\n\nPATTERN ALERT: {pattern['description']}"
+    elif pattern:
+        ai_explanation = f"PATTERN ALERT: {pattern['description']}"
+
     return {
         "score": score,
         "action": action,
@@ -219,7 +311,8 @@ def calculate_threat_score(request) -> Dict[str, Any]:
         "triggered_signals": explain_signals(signals),
         "risk_summary": risk_summary,
         "cooling_off_seconds": cooling_off,
-        "ai_explanation": ai_explanation
+        "ai_explanation": ai_explanation,
+        "pattern": pattern
     }
 
 
