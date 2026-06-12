@@ -109,3 +109,39 @@ class AuditEntry(BaseModel):
 class AuditResponse(BaseModel):
     entries: List[AuditEntry]
     total_count: int
+
+
+# ─── PERSONALITY PROFILING ────────────────────────────
+
+class RiskAppetite(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+class FinancialGoalType(str, Enum):
+    GROWTH = "growth"
+    PRESERVATION = "preservation"
+    INCOME = "income"
+    TAX_SAVING = "tax_saving"
+
+class Archetype(str, Enum):
+    ACCUMULATOR = "accumulator"       # Young, growth-focused, high risk tolerance
+    PROTECTOR = "protector"           # Family-first, low risk, stability focused
+    OPTIMIZER = "optimizer"           # Tax and returns focused, analytical
+    PRESERVER = "preserver"           # Near retirement, capital protection first
+
+class UserProfile(BaseModel):
+    age: int
+    annual_income: float
+    dependents: int                   # number of financial dependents
+    risk_appetite: RiskAppetite
+    primary_goal: FinancialGoalType
+    investment_horizon_years: int     # how many years they plan to invest
+
+class ArchetypeResponse(BaseModel):
+    archetype: Archetype
+    label: str                        # human readable name
+    description: str                  # what this means for them
+    recommended_allocation: dict      # ideal portfolio % by asset class
+    advisor_style: str                # how the AI should talk to this user
+    key_priorities: List[str]         # top 3 things this archetype cares about

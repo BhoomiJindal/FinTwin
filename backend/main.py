@@ -8,10 +8,12 @@ from simulator import run_counterfactual, compare_all_assets
 from models import (
     Assets, MarketData, NetWorthResponse,
     TransactionRequest, ThreatResponse, ThreatSignals, DecisionAction,
-    ChatRequest, ChatResponse,
+    ChatRequest, ChatResponse, ReasoningStep,
     PINRequest, PINResponse,
-    AuditEntry, AuditResponse
+    AuditEntry, AuditResponse,
+    UserProfile, ArchetypeResponse, Archetype
 )
+from profiler import get_archetype_response, get_archetype_context, classify_archetype
 
 # ─── SETUP ────────────────────────────────────────────
 
@@ -103,7 +105,11 @@ def chat(request: ChatRequest):
     if not request.message or request.message.strip() == "":
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    result = get_ai_advice(request.message, assets_dict)
+    # Pass archetype if profile has been set
+    archetype = current_user_profile.get("archetype")
+    if archetype and hasattr(archetype, 'value'):
+        archetype = archetype.value
+    result = get_ai_advice(request.message, assets_dict, archetype)
 
     reasoning_steps = [
         ReasoningStep(**step) for step in result.get("reasoning", [])
@@ -335,3 +341,32 @@ def compare_all(
         raise HTTPException(status_code=400, detail="Amount must be positive")
 
     return compare_all_assets(amount, from_year, to_year)
+
+
+# ── User Personality Profiling ────────────────────────
+
+# Store current user profile in memory
+current_user_profile = {"archetype": None, "profile": None}
+
+@app.post("/api/profile/classify", response_model=ArchetypeResponse)
+def classify_user(profile: UserProfile):
+    result = get_archetype_response(profile)
+
+    # Store archetype so advisor uses it in all future responses
+    current_user_profile["archetype"] = result["archetype"]
+    current_user_profile["profile"] = profile.model_dump()
+
+    audit_log.append(AuditEntry(
+        timestamp=datetime.now().isoformat(),
+        action="PROFILE_CLASSIFIED",
+        outcome=f"Archetype: {result['label']}"
+    ))
+
+    return ArchetypeResponse(**result)
+
+
+@app.get("/api/profile/current")
+def get_current_profile():
+    if not current_user_profile["archetype"]:
+        return {"archetype": None, "message": "No profile set yet"}
+    return current_user_profile

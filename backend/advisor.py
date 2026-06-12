@@ -204,7 +204,7 @@ TONE: Confident, clear, professional. Like a smart friend who happens to be a fi
 # Used when API credits are unavailable
 # Responses are personalized using actual portfolio numbers
 
-def get_fallback_advice(message: str, assets: Dict, market: Dict) -> str:
+def get_fallback_advice(message: str, assets: Dict, market: Dict, archetype: str = None) -> str:
     msg = message.lower()
     gold_value = assets.get("gold_grams", 0) * market["gold_price_per_gram"]
     net_worth = (
@@ -216,44 +216,126 @@ def get_fallback_advice(message: str, assets: Dict, market: Dict) -> str:
     )
     gold_allocation = (gold_value / (net_worth + 1)) * 100
     cash_allocation = (assets.get("liquid_cash", 0) / (net_worth + 1)) * 100
+    mutual_fund_allocation = (assets.get("mutual_funds", 0) / (net_worth + 1)) * 100
+    post_tax_fd = round(market["fd_rate"] * 0.7, 2)
 
+    # ── Archetype-aware equity advice ─────────────────
+    if any(word in msg for word in ["mutual fund", "equity", "stock", "nifty"]):
+
+        if archetype == "accumulator":
+            return (
+                f"Your mutual fund allocation is ₹{assets.get('mutual_funds', 0):,.0f} "
+                f"({mutual_fund_allocation:.1f}% of net worth). "
+                f"As an Accumulator with a long horizon, your ideal equity allocation is 50%. "
+                f"You are currently {'under' if mutual_fund_allocation < 50 else 'at or above'} that target. "
+                f"At NIFTY PE of {market['nifty_pe']}, avoid lump-sum — "
+                f"increase your SIP amount by ₹{int(assets.get('liquid_cash', 0) * 0.05):,} monthly to build position gradually."
+            )
+
+        elif archetype == "preserver":
+            return (
+                f"Your mutual fund allocation is ₹{assets.get('mutual_funds', 0):,.0f} "
+                f"({mutual_fund_allocation:.1f}% of net worth). "
+                f"As a Preserver, your recommended equity exposure is just 10% — "
+                f"you are {'over-exposed' if mutual_fund_allocation > 10 else 'within range'}. "
+                f"At this stage, consider shifting equity gains to Senior Citizen FDs at {market['fd_rate']}% "
+                f"or SCSS for stable, protected income. "
+                f"Do not increase equity exposure further."
+            )
+
+        elif archetype == "protector":
+            return (
+                f"Your mutual fund allocation is ₹{assets.get('mutual_funds', 0):,.0f} "
+                f"({mutual_fund_allocation:.1f}% of net worth). "
+                f"As a Protector, keep equity at 20% of your portfolio. "
+                f"Before adding more equity, confirm your emergency fund covers "
+                f"6 months of expenses and your family has adequate term insurance. "
+                f"If both are in place, a small SIP increase is reasonable at current PE of {market['nifty_pe']}."
+            )
+
+        elif archetype == "optimizer":
+            return (
+                f"Your mutual fund allocation is ₹{assets.get('mutual_funds', 0):,.0f} "
+                f"({mutual_fund_allocation:.1f}% of net worth). "
+                f"As an Optimizer, check if your equity funds are ELSS — "
+                f"if not, consider switching a portion to ELSS to claim 80C benefits. "
+                f"Post-tax FD return is only {post_tax_fd}% vs NIFTY's {market['nifty_1yr_return']}% last year. "
+                f"At PE {market['nifty_pe']}, SIP is preferred over lump-sum."
+            )
+
+        else:
+            # No archetype set — generic response
+            return (
+                f"Your mutual fund allocation is ₹{assets.get('mutual_funds', 0):,.0f}. "
+                f"NIFTY PE is currently at {market['nifty_pe']}, which is moderately valued. "
+                f"NIFTY has returned {market['nifty_1yr_return']}% over the past year. "
+                f"With inflation at {market['inflation_rate']}%, equity still offers real returns — "
+                f"continuing SIPs makes sense rather than lump-sum at current PE levels."
+            )
+
+    # ── Gold advice ────────────────────────────────────
     if any(word in msg for word in ["gold", "buy gold", "invest gold"]):
-        return (
-            f"Your current gold holding is {assets.get('gold_grams', 0)}g "
-            f"worth ₹{gold_value:,.0f}, which is {gold_allocation:.1f}% of your net worth. "
-            f"With inflation at {market['inflation_rate']}% and gold returning "
-            f"{market['gold_1yr_return']}% over the past year, gold is performing well as a hedge. "
-            f"However, financial advisors recommend keeping gold between 10–15% of your portfolio — "
-            f"{'you are within range, a small addition is reasonable.' if gold_allocation < 15 else 'you are above the recommended range, hold off for now.'}"
-        )
 
+        if archetype == "accumulator":
+            return (
+                f"Your gold is {gold_allocation:.1f}% of net worth (₹{gold_value:,.0f}). "
+                f"As an Accumulator, keep gold at 10% — it is a hedge, not a growth engine. "
+                f"Gold returned {market['gold_1yr_return']}% last year but equity historically "
+                f"outperforms long-term. "
+                f"{'You are under the 10% target — a small addition is fine.' if gold_allocation < 10 else 'You are at target — no need to add more.'}"
+            )
+
+        elif archetype == "preserver":
+            return (
+                f"Your gold is {gold_allocation:.1f}% of net worth (₹{gold_value:,.0f}). "
+                f"As a Preserver, gold is an important inflation hedge — target is 20%. "
+                f"With inflation at {market['inflation_rate']}% and gold returning "
+                f"{market['gold_1yr_return']}% last year, "
+                f"{'increasing your gold allocation makes sense.' if gold_allocation < 20 else 'you are at or above target — hold.'}"
+            )
+
+        else:
+            return (
+                f"Your current gold holding is {assets.get('gold_grams', 0)}g "
+                f"worth ₹{gold_value:,.0f}, which is {gold_allocation:.1f}% of your net worth. "
+                f"With inflation at {market['inflation_rate']}% and gold returning "
+                f"{market['gold_1yr_return']}% over the past year, gold is performing well as a hedge. "
+                f"Financial advisors recommend keeping gold between 10-15% of your portfolio — "
+                f"{'you are within range, a small addition is reasonable.' if gold_allocation < 15 else 'you are above the recommended range, hold off for now.'}"
+            )
+
+    # ── FD advice ──────────────────────────────────────
     if any(word in msg for word in ["fd", "fixed deposit", "fixed"]):
-        post_tax_fd = market["fd_rate"] * 0.7  # assuming 30% tax bracket
-        return (
-            f"Current FD rates are at {market['fd_rate']}%, giving you a post-tax return of "
-            f"~{post_tax_fd:.1f}% assuming 30% tax bracket. "
-            f"Your home loan (from liabilities of ₹{assets.get('liabilities', 0):,.0f}) likely costs more than this. "
-            f"If your loan rate exceeds {post_tax_fd:.1f}%, prepaying the loan gives a better guaranteed return than an FD."
-        )
 
-    if any(word in msg for word in ["mutual fund", "equity", "stock", "nifty", "market"]):
-        return (
-            f"Your mutual fund allocation is ₹{assets.get('mutual_funds', 0):,.0f}. "
-            f"NIFTY PE is currently at {market['nifty_pe']}, which is moderately valued. "
-            f"NIFTY has returned {market['nifty_1yr_return']}% over the past year. "
-            f"With inflation at {market['inflation_rate']}%, equity still offers real returns — "
-            f"continuing SIPs makes sense rather than lump-sum at current PE levels."
-        )
+        if archetype in ["preserver", "protector"]:
+            return (
+                f"FD rates are at {market['fd_rate']}% — attractive for your profile. "
+                f"Post-tax return is {post_tax_fd}% (at 30% bracket). "
+                f"As a {'Preserver' if archetype == 'preserver' else 'Protector'}, "
+                f"FDs form a core part of your recommended allocation. "
+                f"Consider laddering FDs across 1, 2, and 3 year tenures "
+                f"to balance liquidity and rate lock-in."
+            )
 
-    if any(word in msg for word in ["cash", "savings", "liquid"]):
-        return (
-            f"You have ₹{assets.get('liquid_cash', 0):,.0f} in liquid cash, "
-            f"which is {cash_allocation:.1f}% of your net worth. "
-            f"Ideal liquid emergency fund is 6 months of expenses. "
-            f"With FD rates at {market['fd_rate']}%, any cash beyond your emergency fund "
-            f"is better deployed in a short-term FD or liquid mutual fund."
-        )
+        elif archetype == "optimizer":
+            return (
+                f"FD rates at {market['fd_rate']}% give post-tax return of {post_tax_fd}%. "
+                f"As an Optimizer, compare this against your home loan rate from "
+                f"liabilities of ₹{assets.get('liabilities', 0):,.0f}. "
+                f"If loan rate exceeds {post_tax_fd}%, prepaying beats FD mathematically. "
+                f"Also consider debt mutual funds — more tax-efficient for your bracket."
+            )
 
+        else:
+            return (
+                f"Current FD rates are at {market['fd_rate']}%, giving post-tax return of "
+                f"~{post_tax_fd}% at 30% tax bracket. "
+                f"Your liabilities are ₹{assets.get('liabilities', 0):,.0f}. "
+                f"If your loan rate exceeds {post_tax_fd}%, prepaying the loan "
+                f"gives a better guaranteed return than an FD."
+            )
+
+    # ── Net worth / portfolio ──────────────────────────
     if any(word in msg for word in ["net worth", "portfolio", "total", "wealth"]):
         return (
             f"Your current net worth is ₹{net_worth:,.0f}. "
@@ -262,24 +344,24 @@ def get_fallback_advice(message: str, assets: Dict, market: Dict) -> str:
             f"Gold ₹{gold_value:,.0f} | "
             f"Real Estate ₹{assets.get('real_estate', 0):,.0f} | "
             f"Liabilities ₹{assets.get('liabilities', 0):,.0f}. "
-            f"Your asset-to-liability ratio is {((net_worth + assets.get('liabilities', 0)) / (assets.get('liabilities', 0) + 1)):.1f}x — "
-            f"{'healthy.' if net_worth > assets.get('liabilities', 0) * 2 else 'consider reducing liabilities.'}"
+            f"{'As a ' + archetype.title() + ', focus on ' if archetype else ''}"
+            f"{'growing equity exposure.' if archetype == 'accumulator' else 'protecting capital and generating income.' if archetype == 'preserver' else 'optimising post-tax returns.' if archetype == 'optimizer' else 'maintaining adequate insurance and emergency fund.' if archetype == 'protector' else 'balancing growth and safety.'}"
         )
 
-    if any(word in msg for word in ["real estate", "property", "house"]):
-        property_allocation = (assets.get("real_estate", 0) / (net_worth + 1)) * 100
+    # ── Cash advice ────────────────────────────────────
+    if any(word in msg for word in ["cash", "savings", "liquid"]):
         return (
-            f"Your real estate is valued at ₹{assets.get('real_estate', 0):,.0f}, "
-            f"representing {property_allocation:.1f}% of your net worth. "
-            f"Real estate is illiquid — ensure your liquid assets cover at least "
-            f"12 months of EMIs and expenses before considering another property purchase."
+            f"You have ₹{assets.get('liquid_cash', 0):,.0f} in liquid cash "
+            f"({cash_allocation:.1f}% of net worth). "
+            f"Ideal emergency fund is 6 months of expenses. "
+            f"{'As an Accumulator, keep it lean — excess cash beyond emergency fund should go to SIPs.' if archetype == 'accumulator' else 'As a Preserver, keep 25% liquid for withdrawal needs.' if archetype == 'preserver' else 'With FD rates at ' + str(market['fd_rate']) + '%, deploy excess cash into short-term FDs.'}"
         )
 
-    # Default response
+    # ── Default ────────────────────────────────────────
     return (
-        f"Based on your net worth of ₹{net_worth:,.0f}, your portfolio looks "
-        f"{'well-diversified' if gold_allocation < 20 and cash_allocation < 40 else 'concentrated in a few assets'}. "
-        f"Current market conditions: Repo rate {market['repo_rate']}%, "
+        f"Based on your net worth of ₹{net_worth:,.0f} "
+        f"{'and your profile as ' + archetype.title() + ', ' if archetype else ', '}"
+        f"current market conditions are: Repo rate {market['repo_rate']}%, "
         f"Inflation {market['inflation_rate']}%, FD rate {market['fd_rate']}%. "
         f"Ask me about gold, FDs, mutual funds, cash, or your overall portfolio for specific advice."
     )
@@ -287,12 +369,24 @@ def get_fallback_advice(message: str, assets: Dict, market: Dict) -> str:
 
 # ─── MAIN: GET AI ADVICE ──────────────────────────────
 
-def get_ai_advice(message: str, assets: Dict) -> Dict[str, Any]:
+def get_ai_advice(message: str, assets: Dict, archetype: str = None) -> Dict[str, Any]:
 
     market = get_market_context()
     shift_triggered, shift_rule, shift_description = check_shift_logic(market)
-
     portfolio_context = build_context(assets, market)
+
+    # Inject archetype into system prompt if available
+    if archetype:
+        from profiler import get_archetype_context, Archetype
+        try:
+            archetype_context = get_archetype_context(Archetype(archetype))
+        except Exception:
+            archetype_context = ""
+    else:
+        archetype_context = ""
+
+    # Build personalized system prompt
+    personalized_system = SYSTEM_PROMPT + archetype_context
 
     if shift_triggered:
         full_message = (
@@ -302,33 +396,29 @@ def get_ai_advice(message: str, assets: Dict) -> Dict[str, Any]:
     else:
         full_message = message
 
-    # Try Claude API first — fall back to rule-based if unavailable
     try:
-        # Add user message to history
         conversation_history.append({
             "role": "user",
             "content": f"{portfolio_context}\n\nUser question: {full_message}"
         })
 
-        # Keep only last 6 messages to stay within context limits
         trimmed_history = conversation_history[-6:]
 
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=1000,
-            system=SYSTEM_PROMPT,
+            system=personalized_system,
             messages=trimmed_history
         )
         reply = response.content[0].text
 
-        # Add assistant reply to history
         conversation_history.append({
             "role": "assistant",
             "content": reply
         })
 
     except Exception:
-        reply = get_fallback_advice(message, assets, market)
+        reply = get_fallback_advice(message, assets, market, archetype)
 
     reasoning = extract_reasoning(message, assets, market)
 
