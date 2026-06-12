@@ -183,3 +183,44 @@ class PatternMatch(BaseModel):
     description: str
     confidence: int       # 0-100, how confident the pattern match is
     score_bonus: float    # additional points added to threat score
+
+
+# ─── GOAL-BASED WEALTH TRACKING ───────────────────────
+
+class GoalCategory(str, Enum):
+    HOME = "home"
+    CAR = "car"
+    EDUCATION = "education"
+    RETIREMENT = "retirement"
+    EMERGENCY_FUND = "emergency_fund"
+    TRAVEL = "travel"
+    OTHER = "other"
+
+class Goal(BaseModel):
+    name: str
+    category: GoalCategory
+    target_amount: float
+    current_saved: float = 0
+    target_years: float           # years remaining to achieve this goal
+    monthly_contribution: float = 0   # what user currently puts toward this goal
+
+class GoalProgress(BaseModel):
+    name: str
+    category: str
+    target_amount: float
+    current_saved: float
+    progress_pct: float
+    target_years: float
+    required_monthly_contribution: float
+    current_monthly_contribution: float
+    monthly_gap: float
+    projected_completion_years: float
+    status: str              # "ON_TRACK", "AHEAD", "BEHIND"
+    ai_status_message: str
+
+class GoalsResponse(BaseModel):
+    goals: List[GoalProgress]
+    total_goals: int
+    goals_on_track: int
+    goals_behind: int
+    overall_message: str

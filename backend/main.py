@@ -13,10 +13,13 @@ from models import (
     AuditEntry, AuditResponse,
     UserProfile, ArchetypeResponse, Archetype,
     TaxProfile, TaxOptimizationResponse,
-    PatternMatch
+    PatternMatch,
+    Goal, GoalProgress, GoalsResponse
 )
 from profiler import get_archetype_response, get_archetype_context, classify_archetype
 from tax_engine import optimize_tax
+from goals import analyze_all_goals
+from typing import List
 
 
 # ─── SETUP ────────────────────────────────────────────
@@ -417,3 +420,54 @@ def tax_optimize(profile: TaxProfile):
         deduction_breakdown=result["deduction_breakdown"],
         reasoning=reasoning_steps
     )
+
+
+# ── Goal-Based Wealth Tracking ────────────────────────
+
+# In-memory goal storage
+user_goals: List[Goal] = []
+
+@app.post("/api/goals/add")
+def add_goal(goal: Goal):
+    if goal.target_amount <= 0:
+        raise HTTPException(status_code=400, detail="Target amount must be positive")
+    if goal.target_years <= 0:
+        raise HTTPException(status_code=400, detail="Target years must be positive")
+
+    user_goals.append(goal)
+
+    audit_log.append(AuditEntry(
+        timestamp=datetime.now().isoformat(),
+        action="GOAL_ADDED",
+        outcome=f"{goal.name} — Target ₹{goal.target_amount:,.0f} in {goal.target_years} years"
+    ))
+
+    return {"success": True, "message": f"Goal '{goal.name}' added", "total_goals": len(user_goals)}
+
+
+@app.get("/api/goals/progress", response_model=GoalsResponse)
+def get_goals_progress():
+    if not user_goals:
+        return GoalsResponse(
+            goals=[],
+            total_goals=0,
+            goals_on_track=0,
+            goals_behind=0,
+            overall_message="No goals set yet. Add a goal to start tracking progress."
+        )
+
+    result = analyze_all_goals(user_goals)
+
+    return GoalsResponse(
+        goals=[GoalProgress(**g) for g in result["goals"]],
+        total_goals=result["total_goals"],
+        goals_on_track=result["goals_on_track"],
+        goals_behind=result["goals_behind"],
+        overall_message=result["overall_message"]
+    )
+
+
+@app.delete("/api/goals/clear")
+def clear_goals():
+    user_goals.clear()
+    return {"success": True, "message": "All goals cleared"}
