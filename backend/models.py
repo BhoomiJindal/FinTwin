@@ -148,3 +148,28 @@ class ArchetypeResponse(BaseModel):
     recommended_allocation: dict      # ideal portfolio % by asset class
     advisor_style: str                # how the AI should talk to this user
     key_priorities: List[str]         # top 3 things this archetype cares about
+
+
+# ─── TAX OPTIMISATION ──────────────────────────────────
+
+class TaxRegime(str, Enum):
+    OLD = "old"
+    NEW = "new"
+
+class TaxProfile(BaseModel):
+    annual_income: float
+    regime: TaxRegime = TaxRegime.OLD
+    existing_80c: float = 0          # current 80C investments (ELSS, PPF, etc.)
+    existing_80d: float = 0          # health insurance premium paid
+    home_loan_interest: float = 0    # for 24(b) deduction
+    nps_contribution: float = 0      # 80CCD(1B)
+
+class TaxOptimizationResponse(BaseModel):
+    tax_regime: str
+    current_taxable_income: float
+    current_tax_payable: float
+    optimized_tax_payable: float
+    total_savings: float
+    recommendations: List[str]
+    deduction_breakdown: dict
+    reasoning: List[ReasoningStep]

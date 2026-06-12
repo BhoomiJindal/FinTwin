@@ -11,9 +11,12 @@ from models import (
     ChatRequest, ChatResponse, ReasoningStep,
     PINRequest, PINResponse,
     AuditEntry, AuditResponse,
-    UserProfile, ArchetypeResponse, Archetype
+    UserProfile, ArchetypeResponse, Archetype,
+    TaxProfile, TaxOptimizationResponse
 )
 from profiler import get_archetype_response, get_archetype_context, classify_archetype
+from tax_engine import optimize_tax
+
 
 # ─── SETUP ────────────────────────────────────────────
 
@@ -373,3 +376,32 @@ def get_current_profile():
     if not current_user_profile["archetype"]:
         return {"archetype": None, "message": "No profile set yet"}
     return current_user_profile
+
+
+# ── Tax Optimisation ──────────────────────────────────
+
+@app.post("/api/tax/optimize", response_model=TaxOptimizationResponse)
+def tax_optimize(profile: TaxProfile):
+    if profile.annual_income <= 0:
+        raise HTTPException(status_code=400, detail="Annual income must be positive")
+
+    result = optimize_tax(profile)
+
+    reasoning_steps = [ReasoningStep(**step) for step in result["reasoning"]]
+
+    audit_log.append(AuditEntry(
+        timestamp=datetime.now().isoformat(),
+        action="TAX_OPTIMIZATION",
+        outcome=f"Savings identified: ₹{result['total_savings']:,.0f}"
+    ))
+
+    return TaxOptimizationResponse(
+        tax_regime=result["tax_regime"],
+        current_taxable_income=result["current_taxable_income"],
+        current_tax_payable=result["current_tax_payable"],
+        optimized_tax_payable=result["optimized_tax_payable"],
+        total_savings=result["total_savings"],
+        recommendations=result["recommendations"],
+        deduction_breakdown=result["deduction_breakdown"],
+        reasoning=reasoning_steps
+    )
