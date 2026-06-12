@@ -116,6 +116,39 @@ def extract_reasoning(message: str, assets: Dict, market: Dict) -> list:
 
     return reasoning
 
+
+def calculate_confidence(assets: Dict, archetype: str = None) -> Dict[str, Any]:
+    """
+    Confidence is based on how complete the user's data is.
+    More complete data = higher confidence in the advice.
+    """
+    fields = ["liquid_cash", "mutual_funds", "gold_grams", "real_estate", "liabilities"]
+    filled = sum(1 for f in fields if assets.get(f, 0) > 0)
+    total = len(fields)
+
+    base_confidence = int((filled / total) * 70)  # max 70 from data completeness
+
+    # Archetype adds confidence — personalization improves advice quality
+    archetype_bonus = 20 if archetype else 0
+
+    # Always have market data, so base 10 points guaranteed
+    market_bonus = 10
+
+    confidence = min(base_confidence + archetype_bonus + market_bonus, 100)
+
+    # Generate note if confidence is not full
+    note = None
+    if confidence < 100:
+        missing = [f.replace("_", " ").title() for f in fields if assets.get(f, 0) == 0]
+        if missing and not archetype:
+            note = f"Add {', '.join(missing)} and complete your profile for more precise advice."
+        elif missing:
+            note = f"Add {', '.join(missing)} for more precise advice."
+        elif not archetype:
+            note = "Complete your profile for more personalized advice."
+
+    return {"confidence": confidence, "note": note}
+
 # ─── SHIFT LOGIC RULES ────────────────────────────────
 # Rules that trigger proactive AI advice
 # LLM reasons over the trigger + user context
@@ -421,10 +454,13 @@ def get_ai_advice(message: str, assets: Dict, archetype: str = None) -> Dict[str
         reply = get_fallback_advice(message, assets, market, archetype)
 
     reasoning = extract_reasoning(message, assets, market)
+    confidence_data = calculate_confidence(assets, archetype)
 
     return {
         "reply": reply,
         "shift_logic_triggered": shift_triggered,
         "shift_logic_rule": shift_rule if shift_triggered else None,
-        "reasoning": reasoning
+        "reasoning": reasoning,
+        "confidence": confidence_data["confidence"],
+        "confidence_note": confidence_data["note"]
     }

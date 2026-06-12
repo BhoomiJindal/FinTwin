@@ -125,7 +125,9 @@ def chat(request: ChatRequest):
         reply=result["reply"],
         shift_logic_triggered=result["shift_logic_triggered"],
         shift_logic_rule=result["shift_logic_rule"],
-        reasoning=reasoning_steps
+        reasoning=reasoning_steps,
+        confidence=result["confidence"],
+        confidence_note=result["confidence_note"]
     )
 
 
@@ -154,7 +156,8 @@ def verify_transaction(request: TransactionRequest):
         message=result["message"],
         triggered_signals=result["triggered_signals"],
         risk_summary=result["risk_summary"],
-        cooling_off_seconds=result["cooling_off_seconds"]
+        cooling_off_seconds=result["cooling_off_seconds"],
+        ai_explanation=result["ai_explanation"]
     )
 
 

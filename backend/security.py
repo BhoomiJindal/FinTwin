@@ -2,7 +2,7 @@ import numpy as np
 import hashlib
 import time
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # ─── TRANSACTION HISTORY ──────────────────────────────
 # In-memory store for velocity and amount baseline
@@ -63,6 +63,57 @@ def generate_risk_summary(score: float, action: str, signals: Dict) -> str:
     else:
         return f"Transaction blocked. Primary trigger: {dominant_reason}. Score {score}/100 exceeds safety threshold."
     
+
+def generate_ai_explanation(score: float, action: str, signals: Dict, request) -> Optional[str]:
+    """
+    For CHALLENGE and BLOCK, generate a detailed natural-language
+    explanation referencing the specific transaction details.
+    """
+    if action == "ALLOW":
+        return None
+
+    issues = []
+
+    if signals["device_anomaly"] > 60:
+        issues.append("from a device we have never seen before")
+
+    if signals["amount_anomaly"] > 60:
+        issues.append(f"for ₹{request.amount:,.0f} — significantly higher than your typical transaction amount")
+
+    if signals["time_anomaly"] > 60:
+        issues.append("at an unusual hour")
+
+    if signals["velocity_anomaly"] > 60:
+        issues.append("as part of an unusually high number of transactions in the last hour")
+
+    if signals["urgency_anomaly"] > 60:
+        issues.append(f"within {request.session_duration_ms / 1000:.0f} seconds of opening the app — much faster than typical user behaviour")
+
+    if signals["recipient_risk"] > 60:
+        issues.append("to a recipient not on your verified list")
+
+    if not issues:
+        issues.append("due to a combination of minor irregularities across multiple signals")
+
+    issue_text = ", ".join(issues)
+
+    if action == "BLOCK":
+        return (
+            f"This transaction was blocked because it was attempted {issue_text}. "
+            f"This combination of factors closely matches patterns seen in account takeover "
+            f"or coerced transfer attempts. Threat Score: {score}/100. "
+            f"Your trusted contact has been notified. If this was you, "
+            f"please verify your identity to proceed."
+        )
+    else:  # CHALLENGE
+        return (
+            f"This transaction was flagged for review because it was attempted {issue_text}. "
+            f"This is not necessarily fraudulent, but enough irregularities were detected "
+            f"to require identity confirmation. Threat Score: {score}/100. "
+            f"Please confirm your identity to proceed — this takes a few seconds."
+        )
+    
+
 
 # ─── MAIN: 6-SIGNAL THREAT SCORING ───────────────────
 
@@ -158,6 +209,7 @@ def calculate_threat_score(request) -> Dict[str, Any]:
 
     risk_summary = generate_risk_summary(score, action, signals)
     cooling_off = 5 if action == "CHALLENGE" else 0
+    ai_explanation = generate_ai_explanation(score, action, signals, request)
 
     return {
         "score": score,
@@ -166,7 +218,8 @@ def calculate_threat_score(request) -> Dict[str, Any]:
         "message": message,
         "triggered_signals": explain_signals(signals),
         "risk_summary": risk_summary,
-        "cooling_off_seconds": cooling_off
+        "cooling_off_seconds": cooling_off,
+        "ai_explanation": ai_explanation
     }
 
 
