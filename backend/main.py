@@ -14,12 +14,14 @@ from models import (
     UserProfile, ArchetypeResponse, Archetype,
     TaxProfile, TaxOptimizationResponse,
     PatternMatch,
-    Goal, GoalProgress, GoalsResponse
+    Goal, GoalProgress, GoalsResponse,
+    DivergenceResponse, AllocationBreakdown
 )
 from profiler import get_archetype_response, get_archetype_context, classify_archetype
 from tax_engine import optimize_tax
 from goals import analyze_all_goals
 from typing import List
+from shadow_portfolio import calculate_divergence
 
 
 # ─── SETUP ────────────────────────────────────────────
@@ -471,3 +473,45 @@ def get_goals_progress():
 def clear_goals():
     user_goals.clear()
     return {"success": True, "message": "All goals cleared"}
+
+
+# ── Shadow Portfolio Divergence ───────────────────────
+
+@app.get("/api/portfolio/divergence", response_model=DivergenceResponse)
+def get_divergence():
+    twin = get_twin()  # reuse existing twin endpoint logic
+    market = get_market_data()
+
+    assets_dict = twin.assets.model_dump()
+
+    # Use archetype's ideal allocation if available
+    ideal_allocation = None
+    archetype_label = None
+
+    if current_user_profile.get("archetype"):
+        from profiler import ARCHETYPES, Archetype
+        archetype = current_user_profile["archetype"]
+        if hasattr(archetype, 'value'):
+            archetype = Archetype(archetype.value)
+        else:
+            archetype = Archetype(archetype)
+
+        ideal_allocation = ARCHETYPES[archetype]["recommended_allocation"]
+        archetype_label = ARCHETYPES[archetype]["label"]
+
+    result = calculate_divergence(assets_dict, market.model_dump(), ideal_allocation)
+
+    audit_log.append(AuditEntry(
+        timestamp=datetime.now().isoformat(),
+        action="DIVERGENCE_CHECK",
+        outcome=f"Score: {result['divergence_score']}/100 — {result['urgency']}"
+    ))
+
+    return DivergenceResponse(
+        divergence_score=result["divergence_score"],
+        urgency=result["urgency"],
+        breakdown=[AllocationBreakdown(**b) for b in result["breakdown"]],
+        biggest_gap=AllocationBreakdown(**result["biggest_gap"]),
+        ai_summary=result["ai_summary"],
+        archetype_used=archetype_label
+    )

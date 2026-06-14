@@ -224,3 +224,20 @@ class GoalsResponse(BaseModel):
     goals_on_track: int
     goals_behind: int
     overall_message: str
+
+
+    # ─── SHADOW PORTFOLIO DIVERGENCE ──────────────────────
+
+class AllocationBreakdown(BaseModel):
+    asset_class: str
+    current_pct: float
+    ideal_pct: float
+    difference: float        # positive = overweight, negative = underweight
+
+class DivergenceResponse(BaseModel):
+    divergence_score: int           # 0-100, higher = more divergence
+    urgency: str                     # "LOW", "MEDIUM", "HIGH"
+    breakdown: List[AllocationBreakdown]
+    biggest_gap: AllocationBreakdown
+    ai_summary: str
+    archetype_used: Optional[str] = None
