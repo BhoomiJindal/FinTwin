@@ -119,11 +119,16 @@ def chat(request: ChatRequest):
     if not request.message or request.message.strip() == "":
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    # Pass archetype if profile has been set
     archetype = current_user_profile.get("archetype")
     if archetype and hasattr(archetype, 'value'):
         archetype = archetype.value
-    result = get_ai_advice(request.message, assets_dict, archetype)
+
+    result = get_ai_advice(
+        request.message,
+        assets_dict,
+        archetype,
+        request.language or "en"
+    )
 
     reasoning_steps = [
         ReasoningStep(**step) for step in result.get("reasoning", [])
@@ -141,7 +146,8 @@ def chat(request: ChatRequest):
         shift_logic_rule=result["shift_logic_rule"],
         reasoning=reasoning_steps,
         confidence=result["confidence"],
-        confidence_note=result["confidence_note"]
+        confidence_note=result["confidence_note"],
+        language_detected=result["language_detected"]
     )
 
 

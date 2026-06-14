@@ -150,6 +150,102 @@ def calculate_confidence(assets: Dict, archetype: str = None) -> Dict[str, Any]:
 
     return {"confidence": confidence, "note": note}
 
+
+
+def detect_language(message: str) -> str:
+    """
+    Detects if the message is in Hindi (Devanagari script)
+    or contains common Hindi romanized keywords.
+    Returns "hi" or "en".
+    """
+    # Check for Devanagari Unicode range
+    devanagari_chars = sum(1 for c in message if '\u0900' <= c <= '\u097F')
+    if devanagari_chars > 2:
+        return "hi"
+
+    # Check for common romanized Hindi financial keywords
+    hindi_keywords = [
+        "mera", "meri", "kitna", "paisa", "paise", "rupaye", "sona",
+        "nivesh", "bachat", "loan", "karj", "sampatti", "kya", "kaise",
+        "chahiye", "batao", "bolo", "hindi", "हिंदी"
+    ]
+    msg_lower = message.lower()
+    if sum(1 for kw in hindi_keywords if kw in msg_lower) >= 2:
+        return "hi"
+
+    return "en"
+
+
+HINDI_SYSTEM_PROMPT = """Aap FinTwin ke embedded AI wealth advisor hain Indian users ke liye.
+
+AAPKE NIYAM:
+1. Sirf us portfolio aur market data ke aadhar par salah dein jo aapko diya gaya hai.
+2. Hamesha apne jawab mein portfolio se kam se kam ek specific number zaroor mention karein.
+3. Jawab 4 sentences se zyada nahi hona chahiye. Direct aur actionable rahein.
+4. Apna reasoning briefly explain karein — ek sentence mein KYUN.
+5. Agar user finance se bahar ki baat kare, politely redirect karein.
+6. Aap SEBI-aware hain — guaranteed returns ka vaada kabhi mat karein.
+
+TONE: Confident, clear, professional. Jaise ek samajhdar dost jo financial advisor bhi ho.
+Hinglish mein jawab dein (Hindi + simple English mix) — pure Hindi avoid karein."""
+
+
+def get_hindi_fallback(message: str, assets: Dict, market: Dict) -> str:
+    msg = message.lower()
+    gold_value = assets.get("gold_grams", 0) * market["gold_price_per_gram"]
+    net_worth = (
+        assets.get("liquid_cash", 0) +
+        assets.get("mutual_funds", 0) +
+        gold_value +
+        assets.get("real_estate", 0) -
+        assets.get("liabilities", 0)
+    )
+    gold_pct = round((gold_value / (net_worth + 1)) * 100, 1)
+
+    if any(w in msg for w in ["sona", "gold", "सोना"]):
+        return (
+            f"Aapke paas abhi {assets.get('gold_grams', 0)}g sona hai "
+            f"jiska value ₹{gold_value:,.0f} hai — yeh aapki net worth ka {gold_pct}% hai. "
+            f"Inflation {market['inflation_rate']}% par hai aur sone ne last year "
+            f"{market['gold_1yr_return']}% return diya. "
+            f"{'Thoda aur sona lena reasonable hai kyunki aap 10-15% target se neeche hain.' if gold_pct < 10 else 'Aap already recommended range mein hain — aur zyada lene ki zaroorat nahi.'}"
+        )
+
+    if any(w in msg for w in ["mutual fund", "share", "equity", "nifty", "nivesh"]):
+        return (
+            f"Aapka mutual fund allocation ₹{assets.get('mutual_funds', 0):,.0f} hai. "
+            f"NIFTY PE abhi {market['nifty_pe']} par hai — moderate valuation. "
+            f"Inflation {market['inflation_rate']}% ke saath, equity abhi bhi real returns de raha hai. "
+            f"Lump-sum se bachein — SIP continue karna zyada samajhdari hai."
+        )
+
+    if any(w in msg for w in ["net worth", "kitna", "total", "sampatti", "paisa"]):
+        return (
+            f"Aapki abhi ki net worth ₹{net_worth:,.0f} hai. "
+            f"Cash ₹{assets.get('liquid_cash', 0):,.0f} | "
+            f"Mutual Funds ₹{assets.get('mutual_funds', 0):,.0f} | "
+            f"Sona ₹{gold_value:,.0f} | "
+            f"Property ₹{assets.get('real_estate', 0):,.0f} | "
+            f"Karj ₹{assets.get('liabilities', 0):,.0f}. "
+            f"Repo rate {market['repo_rate']}% aur inflation {market['inflation_rate']}% hai."
+        )
+
+    if any(w in msg for w in ["fd", "fixed deposit", "bachat"]):
+        post_tax = round(market["fd_rate"] * 0.7, 2)
+        return (
+            f"Abhi FD rate {market['fd_rate']}% hai — tax ke baad effective return {post_tax}% hoga. "
+            f"Agar aapka home loan rate {post_tax}% se zyada hai, "
+            f"toh FD ki jagah loan prepay karna zyada faydemand hai. "
+            f"₹{assets.get('liabilities', 0):,.0f} liabilities ko dhyan mein rakhein."
+        )
+
+    return (
+        f"Aapki net worth ₹{net_worth:,.0f} hai. "
+        f"Market conditions: Repo rate {market['repo_rate']}%, "
+        f"Inflation {market['inflation_rate']}%, FD rate {market['fd_rate']}%. "
+        f"Sona, FD, mutual funds, ya apni overall portfolio ke baare mein poochh sakte hain."
+    )
+
 # ─── SHIFT LOGIC RULES ────────────────────────────────
 # Rules that trigger proactive AI advice
 # LLM reasons over the trigger + user context
@@ -411,24 +507,28 @@ def get_fallback_advice(message: str, assets: Dict, market: Dict, archetype: str
 
 # ─── MAIN: GET AI ADVICE ──────────────────────────────
 
-def get_ai_advice(message: str, assets: Dict, archetype: str = None) -> Dict[str, Any]:
+def get_ai_advice(message: str, assets: Dict, archetype: str = None, language: str = "en") -> Dict[str, Any]:
 
     market = get_market_context()
     shift_triggered, shift_rule, shift_description = check_shift_logic(market)
     portfolio_context = build_context(assets, market)
 
-    # Inject archetype into system prompt if available
-    if archetype:
-        from profiler import get_archetype_context, Archetype
-        try:
-            archetype_context = get_archetype_context(Archetype(archetype))
-        except Exception:
-            archetype_context = ""
-    else:
-        archetype_context = ""
+    # Auto-detect language if not specified
+    detected_language = detect_language(message)
+    final_language = detected_language if detected_language == "hi" else language
 
-    # Build personalized system prompt
-    personalized_system = SYSTEM_PROMPT + archetype_context
+    # Choose system prompt based on language
+    if final_language == "hi":
+        personalized_system = HINDI_SYSTEM_PROMPT
+    else:
+        personalized_system = SYSTEM_PROMPT
+        if archetype:
+            from profiler import get_archetype_context, Archetype
+            try:
+                archetype_context = get_archetype_context(Archetype(archetype))
+                personalized_system = SYSTEM_PROMPT + archetype_context
+            except Exception:
+                pass
 
     if shift_triggered:
         full_message = (
@@ -460,7 +560,10 @@ def get_ai_advice(message: str, assets: Dict, archetype: str = None) -> Dict[str
         })
 
     except Exception:
-        reply = get_fallback_advice(message, assets, market, archetype)
+        if final_language == "hi":
+            reply = get_hindi_fallback(message, assets, market)
+        else:
+            reply = get_fallback_advice(message, assets, market, archetype)
 
     reasoning = extract_reasoning(message, assets, market)
     confidence_data = calculate_confidence(assets, archetype)
@@ -471,5 +574,6 @@ def get_ai_advice(message: str, assets: Dict, archetype: str = None) -> Dict[str
         "shift_logic_rule": shift_rule if shift_triggered else None,
         "reasoning": reasoning,
         "confidence": confidence_data["confidence"],
-        "confidence_note": confidence_data["note"]
+        "confidence_note": confidence_data["note"],
+        "language_detected": final_language
     }

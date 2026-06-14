@@ -82,6 +82,7 @@ class ThreatResponse(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     assets: Assets
+    language: Optional[str] = "en"   # "en" or "hi"
 
 class ReasoningStep(BaseModel):
     factor: str        # what was looked at
@@ -95,6 +96,7 @@ class ChatResponse(BaseModel):
     reasoning: Optional[List[ReasoningStep]] = None
     confidence: int = 100
     confidence_note: Optional[str] = None
+    language_detected: Optional[str] = "en"
 
 # ─── SECURITY ─────────────────────────────────────────
 
