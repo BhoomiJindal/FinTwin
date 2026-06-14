@@ -40,6 +40,10 @@ def explain_signals(signals: Dict[str, float]) -> list[str]:
         explanations.append("Transaction completed suspiciously fast after login")
     if signals["recipient_risk"] > 60:
         explanations.append("Recipient account is unknown or unverified")
+    if signals.get("otp_latency_anomaly", 0) > 60:
+        explanations.append("OTP entry pattern suggests coercion or automation")
+    if signals.get("recipient_account_risk", 0) > 60:
+        explanations.append("Recipient account is newly created or unestablished")
     if not explanations:
         explanations.append("All signals within normal range")
     return explanations
@@ -113,6 +117,84 @@ def generate_ai_explanation(score: float, action: str, signals: Dict, request) -
             f"Please confirm your identity to proceed — this takes a few seconds."
         )
     
+
+def score_otp_latency(keypress_intervals: Optional[list]) -> float:
+    """
+    Analyzes milliseconds between OTP keypresses.
+    
+    Normal human typing has natural variation (80-300ms between keys).
+    Two red flags:
+    1. Robotic cadence — all intervals identical (bot or auto-fill under coercion)
+    2. High hesitation — very long pauses suggesting someone is being dictated to
+    
+    Returns 0-100 anomaly score.
+    """
+    if not keypress_intervals or len(keypress_intervals) < 2:
+        return 0.0  # no data — no penalty
+
+    intervals = keypress_intervals
+
+    avg_interval = sum(intervals) / len(intervals)
+    variance = sum((x - avg_interval) ** 2 for x in intervals) / len(intervals)
+    std_dev = variance ** 0.5
+
+    score = 0.0
+
+    # Flag 1: Robotic cadence (very low standard deviation)
+    # Human typing std_dev is typically > 30ms
+    if std_dev < 20 and avg_interval < 200:
+        score += 60  # suspiciously uniform — possible bot or auto-paste
+
+    # Flag 2: Hesitation pattern (very long pauses between some digits)
+    long_pauses = [i for i in intervals if i > 3000]
+    if long_pauses:
+        score += min(len(long_pauses) * 20, 40)
+        # Long pauses suggest user is being told digits one by one
+
+    # Flag 3: Extremely fast entry (all under 80ms — faster than human)
+    fast_presses = [i for i in intervals if i < 80]
+    if len(fast_presses) == len(intervals):
+        score += 50  # inhuman speed — auto-fill or script
+
+    return min(score, 100.0)
+
+
+def score_recipient_risk(
+    recipient: Optional[str],
+    is_whitelisted: bool,
+    account_age_days: Optional[int]
+) -> float:
+    """
+    Scores the risk level of the transaction recipient.
+    
+    Returns 0-100 risk score.
+    """
+    if is_whitelisted:
+        return 5.0  # known safe recipient
+
+    score = 0.0
+
+    # No recipient at all
+    if not recipient or recipient.strip() == "":
+        return 70.0
+
+    # New account — high risk
+    if account_age_days is not None:
+        if account_age_days < 7:
+            score += 80    # account created in last week
+        elif account_age_days < 30:
+            score += 50    # account under a month old
+        elif account_age_days < 90:
+            score += 25    # account under 3 months
+        else:
+            score += 5     # established account
+
+    else:
+        # Unknown account age — moderate risk
+        score += 30
+
+    return min(score, 100.0)
+
 
 def detect_fraud_pattern(request, history: list) -> Optional[Dict[str, Any]]:
     """
@@ -249,21 +331,32 @@ def calculate_threat_score(request) -> Dict[str, Any]:
     else:
         signals["urgency_anomaly"] = 5.0
 
-    # ── Signal 6: Recipient Risk (10%) ────────────────
-    # None/empty recipient = unknown = higher risk
-    if not request.recipient or request.recipient.strip() == "":
-        signals["recipient_risk"] = 70.0
-    else:
-        signals["recipient_risk"] = 10.0
+    # ── Signal 6: Recipient Risk (updated — now uses full scorer) ──
+    signals["recipient_risk"] = score_recipient_risk(
+        request.recipient,
+        request.recipient_is_whitelisted,
+        request.recipient_account_age_days
+    )
 
-    # ── Weighted Threat Score ─────────────────────────
+    # ── Signal 7: OTP Latency Anomaly ─────────────────
+    signals["otp_latency_anomaly"] = score_otp_latency(
+        request.otp_keypress_intervals_ms
+    )
+
+    # ── Signal 8: Recipient Account Risk ──────────────
+    signals["recipient_account_risk"] = signals["recipient_risk"]
+
+    # ── Weighted Threat Score (updated weights) ────────
+    # Redistribute slightly to include new signals
     score = (
-        signals["device_anomaly"]   * 0.20 +
-        signals["amount_anomaly"]   * 0.25 +
-        signals["time_anomaly"]     * 0.15 +
-        signals["velocity_anomaly"] * 0.15 +
-        signals["urgency_anomaly"]  * 0.15 +
-        signals["recipient_risk"]   * 0.10
+        signals["device_anomaly"]       * 0.18 +
+        signals["amount_anomaly"]       * 0.22 +
+        signals["time_anomaly"]         * 0.13 +
+        signals["velocity_anomaly"]     * 0.13 +
+        signals["urgency_anomaly"]      * 0.13 +
+        signals["recipient_risk"]       * 0.10 +
+        signals["otp_latency_anomaly"]  * 0.06 +
+        signals["recipient_account_risk"] * 0.05
     )
     score = round(score, 2)
 

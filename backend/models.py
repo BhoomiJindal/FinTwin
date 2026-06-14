@@ -50,8 +50,11 @@ class TransactionRequest(BaseModel):
     transaction_type: TransactionType
     recipient: Optional[str] = None
     note: Optional[str] = None
-    session_duration_ms: int        # how long user has been on page
-    is_known_device: bool = True    # frontend sends this
+    session_duration_ms: int
+    is_known_device: bool = True
+    otp_keypress_intervals_ms: Optional[List[int]] = None
+    recipient_account_age_days: Optional[int] = None
+    recipient_is_whitelisted: bool = False
 
 class ThreatSignals(BaseModel):
     device_anomaly: float
@@ -60,6 +63,8 @@ class ThreatSignals(BaseModel):
     velocity_anomaly: float
     urgency_anomaly: float
     recipient_risk: float
+    otp_latency_anomaly: float = 0.0
+    recipient_account_risk: float = 0.0
 
 class ThreatResponse(BaseModel):
     threat_score: float
