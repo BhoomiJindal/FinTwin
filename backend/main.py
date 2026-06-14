@@ -16,7 +16,8 @@ from models import (
     PatternMatch,
     Goal, GoalProgress, GoalsResponse,
     DivergenceResponse, AllocationBreakdown,
-    AuditIntelligenceSummary
+    AuditIntelligenceSummary,
+    HourlyBucket, VelocityHeatmapResponse
 )
 from profiler import get_archetype_response, get_archetype_context, classify_archetype
 from tax_engine import optimize_tax
@@ -669,3 +670,110 @@ def market_sentiment():
     ))
 
     return result
+
+
+
+# ── Velocity Heatmap ──────────────────────────────────
+
+@app.get("/api/security/velocity-heatmap", response_model=VelocityHeatmapResponse)
+def velocity_heatmap():
+    from security import transaction_history
+    from datetime import datetime
+
+    def hour_label(h: int) -> str:
+        if h == 0: return "12 AM"
+        if h < 12: return f"{h} AM"
+        if h == 12: return "12 PM"
+        return f"{h - 12} PM"
+
+    # Build 24 empty buckets
+    buckets = {h: {
+        "hour": h,
+        "hour_label": hour_label(h),
+        "transactions": [],
+        "threat_scores": []
+    } for h in range(24)}
+
+    # Fill buckets from transaction history
+    for tx in transaction_history:
+        tx_hour = datetime.fromtimestamp(tx["timestamp"]).hour
+        buckets[tx_hour]["transactions"].append(tx["amount"])
+        buckets[tx_hour]["threat_scores"].append(tx["score"])
+
+    # If no real history, generate mock baseline for demo
+    if not transaction_history:
+        import random
+        random.seed(42)  # consistent mock data every time
+        mock_pattern = {
+            9: 3, 10: 5, 11: 4, 12: 2, 13: 3,
+            14: 6, 15: 5, 16: 4, 17: 3, 18: 2,
+            19: 1, 20: 1, 22: 1, 23: 2, 0: 1
+        }
+        for hour, count in mock_pattern.items():
+            for _ in range(count):
+                amount = random.uniform(1000, 80000)
+                score = random.uniform(10, 45) if 9 <= hour <= 18 else random.uniform(40, 85)
+                buckets[hour]["transactions"].append(amount)
+                buckets[hour]["threat_scores"].append(score)
+
+    # Convert to response format
+    result_buckets = []
+    for h in range(24):
+        b = buckets[h]
+        count = len(b["transactions"])
+        total_amount = sum(b["transactions"])
+        avg_score = sum(b["threat_scores"]) / count if count > 0 else 0
+
+        if count == 0:
+            risk = "NONE"
+        elif avg_score < 30:
+            risk = "LOW"
+        elif avg_score < 60:
+            risk = "MEDIUM"
+        else:
+            risk = "HIGH"
+
+        result_buckets.append(HourlyBucket(
+            hour=h,
+            hour_label=hour_label(h),
+            transaction_count=count,
+            total_amount=round(total_amount, 2),
+            avg_threat_score=round(avg_score, 1),
+            risk_level=risk
+        ))
+
+    # Find peak and safest hours (only among active hours)
+    active = [b for b in result_buckets if b.transaction_count > 0]
+
+    peak = max(active, key=lambda x: x.transaction_count) if active else None
+    safest = min(active, key=lambda x: x.avg_threat_score) if active else None
+
+    # Generate insight
+    high_risk_hours = [b for b in active if b.risk_level == "HIGH"]
+
+    if not active:
+        insight = "No transaction history available yet. Heatmap will populate as transactions are made."
+    elif high_risk_hours:
+        high_labels = ", ".join(b.hour_label for b in high_risk_hours[:3])
+        insight = (
+            f"High-risk transaction activity detected at: {high_labels}. "
+            f"These hours show elevated threat scores — "
+            f"transactions during these times will receive additional scrutiny."
+        )
+    else:
+        insight = (
+            f"Transaction patterns look healthy. "
+            f"Peak activity at {peak.hour_label if peak else 'N/A'} "
+            f"with consistently low threat scores. "
+            f"No unusual time-based patterns detected."
+        )
+
+    return VelocityHeatmapResponse(
+        buckets=result_buckets,
+        peak_hour=peak.hour if peak else None,
+        peak_hour_label=peak.hour_label if peak else None,
+        safest_hour=safest.hour if safest else None,
+        safest_hour_label=safest.hour_label if safest else None,
+        total_transactions=sum(b.transaction_count for b in result_buckets),
+        insight=insight
+    )

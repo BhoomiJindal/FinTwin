@@ -259,3 +259,24 @@ class AuditIntelligenceSummary(BaseModel):
     security_score: int           # 0-100
     summary_message: str
     recommendations: List[str]
+
+
+
+# ─── VELOCITY HEATMAP ─────────────────────────────────
+
+class HourlyBucket(BaseModel):
+    hour: int                    # 0-23
+    hour_label: str              # "12 AM", "1 AM" etc
+    transaction_count: int
+    total_amount: float
+    avg_threat_score: float
+    risk_level: str              # "LOW", "MEDIUM", "HIGH", "NONE"
+
+class VelocityHeatmapResponse(BaseModel):
+    buckets: List[HourlyBucket]
+    peak_hour: Optional[int]
+    peak_hour_label: Optional[str]
+    safest_hour: Optional[int]
+    safest_hour_label: Optional[str]
+    total_transactions: int
+    insight: str
