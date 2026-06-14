@@ -23,6 +23,7 @@ from tax_engine import optimize_tax
 from goals import analyze_all_goals
 from typing import List
 from shadow_portfolio import calculate_divergence
+from sentiment import get_market_sentiment
 
 
 # ─── SETUP ────────────────────────────────────────────
@@ -653,3 +654,18 @@ def get_audit_summary():
         summary_message=summary_message,
         recommendations=recommendations
     )
+
+
+# ── Market Sentiment ──────────────────────────────────
+
+@app.get("/api/market/sentiment")
+def market_sentiment():
+    result = get_market_sentiment()
+
+    audit_log.append(AuditEntry(
+        timestamp=datetime.now().isoformat(),
+        action="SENTIMENT_CHECK",
+        outcome=f"Market mood: {result['overall_mood']} — Score: {result['overall_score']}"
+    ))
+
+    return result

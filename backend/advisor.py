@@ -2,6 +2,7 @@ import os
 import anthropic
 from dotenv import load_dotenv
 from typing import Dict, Any
+from sentiment import get_market_sentiment
 
 # Stores last 6 messages per session (3 exchanges)
 # Resets on server restart — fine for prototype
@@ -197,6 +198,9 @@ def build_context(assets: Dict, market: Dict) -> str:
     )
     net_worth = total_assets - assets.get("liabilities", 0)
 
+    # Get live sentiment
+    sentiment = get_market_sentiment()
+
     return f"""
 USER PORTFOLIO SNAPSHOT:
 - Liquid Cash: ₹{assets.get('liquid_cash', 0):,.0f}
@@ -214,6 +218,11 @@ CURRENT MARKET CONDITIONS:
 - FD Rate (1yr): {market['fd_rate']}%
 - Gold 1-Year Return: {market['gold_1yr_return']}%
 - NIFTY 1-Year Return: {market['nifty_1yr_return']}%
+
+MARKET SENTIMENT (from recent headlines):
+- Overall Mood: {sentiment['overall_mood']} (Score: {sentiment['overall_score']}/100)
+- {sentiment['mood_description']}
+- Sentiment Advisory: {sentiment['advisory']}
 """
 
 
