@@ -241,3 +241,21 @@ class DivergenceResponse(BaseModel):
     biggest_gap: AllocationBreakdown
     ai_summary: str
     archetype_used: Optional[str] = None
+
+
+    # ─── AUDIT INTELLIGENCE ───────────────────────────────
+
+class AuditIntelligenceSummary(BaseModel):
+    total_events: int
+    chat_queries: int
+    transactions_attempted: int
+    transactions_blocked: int
+    transactions_challenged: int
+    transactions_allowed: int
+    duress_events: int
+    highest_threat_score: float
+    most_common_trigger: Optional[str]
+    security_rating: str          # "SECURE", "MONITORING", "ALERT"
+    security_score: int           # 0-100
+    summary_message: str
+    recommendations: List[str]

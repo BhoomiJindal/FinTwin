@@ -15,7 +15,8 @@ from models import (
     TaxProfile, TaxOptimizationResponse,
     PatternMatch,
     Goal, GoalProgress, GoalsResponse,
-    DivergenceResponse, AllocationBreakdown
+    DivergenceResponse, AllocationBreakdown,
+    AuditIntelligenceSummary
 )
 from profiler import get_archetype_response, get_archetype_context, classify_archetype
 from tax_engine import optimize_tax
@@ -514,4 +515,141 @@ def get_divergence():
         biggest_gap=AllocationBreakdown(**result["biggest_gap"]),
         ai_summary=result["ai_summary"],
         archetype_used=archetype_label
+    )
+
+
+# ── Audit Trail Intelligence ──────────────────────────
+
+@app.get("/api/audit/summary", response_model=AuditIntelligenceSummary)
+def get_audit_summary():
+    if not audit_log:
+        return AuditIntelligenceSummary(
+            total_events=0,
+            chat_queries=0,
+            transactions_attempted=0,
+            transactions_blocked=0,
+            transactions_challenged=0,
+            transactions_allowed=0,
+            duress_events=0,
+            highest_threat_score=0.0,
+            most_common_trigger=None,
+            security_rating="SECURE",
+            security_score=100,
+            summary_message="No activity recorded yet.",
+            recommendations=["Start using FinTwin to build your security baseline."]
+        )
+
+    # Count events by type
+    chat_count = sum(1 for e in audit_log if e.action == "CHAT")
+    tx_attempted = sum(1 for e in audit_log if e.action == "TRANSACTION")
+    tx_blocked = sum(1 for e in audit_log if e.action == "TRANSACTION" and e.outcome == "BLOCK")
+    tx_challenged = sum(1 for e in audit_log if e.action == "TRANSACTION" and e.outcome == "CHALLENGE")
+    tx_allowed = sum(1 for e in audit_log if e.action == "TRANSACTION" and e.outcome == "ALLOW")
+    duress_count = sum(1 for e in audit_log if e.action == "DURESS_TRIGGERED")
+
+    # Highest threat score
+    threat_scores = [e.threat_score for e in audit_log if e.threat_score is not None]
+    highest_threat = max(threat_scores) if threat_scores else 0.0
+
+    # Security score calculation
+    # Start at 100, deduct for bad events
+    security_score = 100
+
+    if tx_blocked > 0:
+        security_score -= min(tx_blocked * 15, 40)
+    if tx_challenged > 0:
+        security_score -= min(tx_challenged * 5, 20)
+    if duress_count > 0:
+        security_score -= min(duress_count * 25, 50)
+    if highest_threat > 75:
+        security_score -= 10
+
+    security_score = max(0, security_score)
+
+    # Security rating
+    if security_score >= 80:
+        security_rating = "SECURE"
+    elif security_score >= 50:
+        security_rating = "MONITORING"
+    else:
+        security_rating = "ALERT"
+
+    # Most common threat trigger across all transactions
+    all_triggers = []
+    for e in audit_log:
+        if e.action == "TRANSACTION" and e.outcome in ["BLOCK", "CHALLENGE"]:
+            # Re-derive what signals were likely high based on outcome
+            all_triggers.append(e.outcome)
+
+    most_common = None
+    if tx_blocked > 0 and tx_blocked >= tx_challenged:
+        most_common = "High-risk transaction attempts blocked"
+    elif tx_challenged > 0:
+        most_common = "Transactions requiring identity verification"
+    elif duress_count > 0:
+        most_common = "Coercion detection events"
+
+    # Generate summary message
+    if duress_count > 0:
+        summary_message = (
+            f"ALERT: {duress_count} duress event(s) detected this session. "
+            f"Trusted contact has been notified. Security Score: {security_score}/100."
+        )
+    elif tx_blocked > 0:
+        summary_message = (
+            f"Brain 02 blocked {tx_blocked} suspicious transaction(s) this session. "
+            f"Security Score: {security_score}/100. System is actively protecting your wealth."
+        )
+    elif tx_challenged > 0:
+        summary_message = (
+            f"Brain 02 flagged {tx_challenged} transaction(s) for identity verification. "
+            f"Security Score: {security_score}/100. All challenges completed successfully."
+        )
+    else:
+        summary_message = (
+            f"All {tx_allowed} transaction(s) processed normally. "
+            f"No suspicious activity detected. Security Score: {security_score}/100."
+        )
+
+    # Generate recommendations
+    recommendations = []
+
+    if duress_count > 0:
+        recommendations.append(
+            "Review all recent transactions and contact your bank immediately. "
+            "Consider changing your real PIN and updating your trusted contact."
+        )
+
+    if tx_blocked > 0:
+        recommendations.append(
+            f"{tx_blocked} transaction(s) were blocked. "
+            "Review the audit trail to confirm these were not legitimate transactions."
+        )
+
+    if highest_threat > 75:
+        recommendations.append(
+            f"A Threat Score of {highest_threat}/100 was recorded this session — "
+            "review the flagged transaction details in the audit trail."
+        )
+
+    if not recommendations:
+        recommendations.append(
+            "No security concerns detected. "
+            "Continue monitoring your audit trail regularly."
+        )
+
+    return AuditIntelligenceSummary(
+        total_events=len(audit_log),
+        chat_queries=chat_count,
+        transactions_attempted=tx_attempted,
+        transactions_blocked=tx_blocked,
+        transactions_challenged=tx_challenged,
+        transactions_allowed=tx_allowed,
+        duress_events=duress_count,
+        highest_threat_score=highest_threat,
+        most_common_trigger=most_common,
+        security_rating=security_rating,
+        security_score=security_score,
+        summary_message=summary_message,
+        recommendations=recommendations
     )
