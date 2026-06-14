@@ -17,7 +17,8 @@ from models import (
     Goal, GoalProgress, GoalsResponse,
     DivergenceResponse, AllocationBreakdown,
     AuditIntelligenceSummary,
-    HourlyBucket, VelocityHeatmapResponse
+    HourlyBucket, VelocityHeatmapResponse,
+    StressTestRequest, StressTestResponse, StressScenario, AssetImpact
 )
 from profiler import get_archetype_response, get_archetype_context, classify_archetype
 from tax_engine import optimize_tax
@@ -25,6 +26,7 @@ from goals import analyze_all_goals
 from typing import List
 from shadow_portfolio import calculate_divergence
 from sentiment import get_market_sentiment
+from stress_test import run_stress_test
 
 
 # ─── SETUP ────────────────────────────────────────────
@@ -776,4 +778,33 @@ def velocity_heatmap():
         safest_hour_label=safest.hour_label if safest else None,
         total_transactions=sum(b.transaction_count for b in result_buckets),
         insight=insight
+    )
+
+
+
+# ── Stress Testing ────────────────────────────────────
+
+@app.post("/api/simulator/stress-test", response_model=StressTestResponse)
+def stress_test(request: StressTestRequest):
+    market = get_market_data()
+    result = run_stress_test(request.assets, request.scenario, market.model_dump())
+
+    audit_log.append(AuditEntry(
+        timestamp=datetime.now().isoformat(),
+        action="STRESS_TEST",
+        outcome=f"Scenario: {result['scenario']} — Impact: {result['impact_pct']:.1f}%"
+    ))
+
+    return StressTestResponse(
+        scenario=result["scenario"],
+        scenario_description=result["scenario_description"],
+        current_net_worth=result["current_net_worth"],
+        stressed_net_worth=result["stressed_net_worth"],
+        total_impact=result["total_impact"],
+        impact_pct=result["impact_pct"],
+        asset_impacts=[AssetImpact(**a) for a in result["asset_impacts"]],
+        recovery_estimate_years=result["recovery_estimate_years"],
+        severity=result["severity"],
+        ai_assessment=result["ai_assessment"],
+        protective_actions=result["protective_actions"]
     )

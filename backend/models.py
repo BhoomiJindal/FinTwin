@@ -285,3 +285,38 @@ class VelocityHeatmapResponse(BaseModel):
     safest_hour_label: Optional[str]
     total_transactions: int
     insight: str
+
+
+    # ─── STRESS TESTING ───────────────────────────────────
+
+class StressScenario(str, Enum):
+    MARKET_CRASH_2008 = "market_crash_2008"
+    COVID_CRASH_2020 = "covid_crash_2020"
+    INFLATION_SURGE = "inflation_surge"
+    RUPEE_COLLAPSE = "rupee_collapse"
+    REAL_ESTATE_CORRECTION = "real_estate_correction"
+    RATE_HIKE_SHOCK = "rate_hike_shock"
+
+class StressTestRequest(BaseModel):
+    assets: Assets
+    scenario: StressScenario
+
+class AssetImpact(BaseModel):
+    asset_class: str
+    current_value: float
+    stressed_value: float
+    change_amount: float
+    change_pct: float
+
+class StressTestResponse(BaseModel):
+    scenario: str
+    scenario_description: str
+    current_net_worth: float
+    stressed_net_worth: float
+    total_impact: float
+    impact_pct: float
+    asset_impacts: List[AssetImpact]
+    recovery_estimate_years: float
+    severity: str               # "MODERATE", "SEVERE", "EXTREME"
+    ai_assessment: str
+    protective_actions: List[str]
