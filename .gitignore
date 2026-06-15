@@ -21,3 +21,5 @@ venv/
 env/
 
 backend/.env
+
+backend/session_state.json
