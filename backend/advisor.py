@@ -3,6 +3,7 @@ import anthropic
 from dotenv import load_dotenv
 from typing import Dict, Any
 from sentiment import get_market_sentiment
+import time
 
 # Stores last 6 messages per session (3 exchanges)
 # Resets on server restart — fine for prototype
@@ -251,30 +252,120 @@ def get_hindi_fallback(message: str, assets: Dict, market: Dict) -> str:
 # LLM reasons over the trigger + user context
 # Returns (triggered: bool, rule_name: str, rule_description: str)
 
-def check_shift_logic(market: Dict[str, float]) -> tuple[bool, str, str]:
+# Stores last 5 market readings for trend detection
+market_history = []
 
+def record_market_snapshot(market: Dict) -> None:
+    market_history.append({
+        "timestamp": time.time(),
+        "fd_rate": market["fd_rate"],
+        "inflation_rate": market["inflation_rate"],
+        "repo_rate": market["repo_rate"],
+        "nifty_pe": market["nifty_pe"],
+        "gold_1yr_return": market["gold_1yr_return"]
+    })
+    # Keep only last 5 readings
+    if len(market_history) > 5:
+        market_history.pop(0)
+
+
+def detect_trend(field: str, direction: str = "rising") -> Dict[str, Any]:
+    """
+    Checks if a market field has been consistently
+    rising or falling across last 3+ readings.
+    Returns trend info.
+    """
+    if len(market_history) < 3:
+        return {"trending": False, "strength": 0, "readings": []}
+
+    recent = market_history[-3:]
+    values = [r[field] for r in recent]
+
+    if direction == "rising":
+        is_trending = all(values[i] < values[i+1] for i in range(len(values)-1))
+    else:
+        is_trending = all(values[i] > values[i+1] for i in range(len(values)-1))
+
+    strength = abs(values[-1] - values[0])
+
+    return {
+        "trending": is_trending,
+        "strength": round(strength, 2),
+        "readings": values,
+        "from": values[0],
+        "to": values[-1]
+    }
+
+
+def check_shift_logic(market: Dict) -> tuple:
+    # Record this reading for trend detection
+    record_market_snapshot(market)
+
+    fd_trend = detect_trend("fd_rate", "rising")
+    inflation_trend = detect_trend("inflation_rate", "rising")
+    pe_trend = detect_trend("nifty_pe", "rising")
+
+    # ── Rule 1: High FD + High PE (original) ──────────
     if market["fd_rate"] > 7.0 and market["nifty_pe"] > 22:
         return (
             True,
             "HIGH_FD_RATE_HIGH_VOLATILITY",
-            f"FD rates are at {market['fd_rate']}% while NIFTY PE is elevated at {market['nifty_pe']}. "
-            f"This suggests shifting equity exposure to high-yield FDs may reduce risk."
+            f"FD rates are at {market['fd_rate']}% while NIFTY PE is elevated "
+            f"at {market['nifty_pe']}. Shifting equity exposure to high-yield "
+            f"FDs may reduce risk."
         )
 
+    # ── Rule 2: FD rate trending up (early warning) ───
+    if fd_trend["trending"] and fd_trend["strength"] >= 0.2:
+        return (
+            True,
+            "FD_RATE_RISING_TREND",
+            f"FD rates have risen consistently over the last 3 readings "
+            f"(from {fd_trend['from']}% to {fd_trend['to']}%). "
+            f"Rates may continue rising — consider locking in FDs soon "
+            f"before rates peak and reverse."
+        )
+
+    # ── Rule 3: Inflation + Gold hedge ────────────────
     if market["inflation_rate"] > 6.0 and market["gold_1yr_return"] > 10:
         return (
             True,
             "INFLATION_GOLD_HEDGE",
-            f"Inflation at {market['inflation_rate']}% with gold returning {market['gold_1yr_return']}% "
-            f"over the past year. Gold may be a useful inflation hedge right now."
+            f"Inflation at {market['inflation_rate']}% with gold returning "
+            f"{market['gold_1yr_return']}% over the past year. "
+            f"Gold is an effective inflation hedge right now."
         )
 
+    # ── Rule 4: Inflation trending up (early warning) ─
+    if inflation_trend["trending"] and inflation_trend["strength"] >= 0.3:
+        return (
+            True,
+            "INFLATION_RISING_TREND",
+            f"Inflation has been rising consistently "
+            f"(from {inflation_trend['from']}% to {inflation_trend['to']}%). "
+            f"Consider increasing gold allocation as an inflation hedge "
+            f"before CPI crosses the 6% threshold."
+        )
+
+    # ── Rule 5: NIFTY PE trending up (early warning) ──
+    if pe_trend["trending"] and pe_trend["strength"] >= 1.0:
+        return (
+            True,
+            "NIFTY_PE_RISING_TREND",
+            f"NIFTY PE has been rising consistently "
+            f"(from {pe_trend['from']} to {pe_trend['to']}). "
+            f"Market is getting expensive — avoid lump-sum equity investments "
+            f"and prefer SIPs to average out the cost."
+        )
+
+    # ── Rule 6: High repo rate + FD opportunity ───────
     if market["repo_rate"] > 6.0 and market["fd_rate"] > 7.0:
         return (
             True,
             "HIGH_REPO_RATE_FD_OPPORTUNITY",
-            f"RBI repo rate at {market['repo_rate']}% has pushed FD rates to {market['fd_rate']}%. "
-            f"Locking in FDs now before rate cuts may be beneficial."
+            f"RBI repo rate at {market['repo_rate']}% has pushed FD rates "
+            f"to {market['fd_rate']}%. Locking in FDs now before rate cuts "
+            f"may be beneficial."
         )
 
     return (False, "", "")
@@ -494,7 +585,123 @@ def get_fallback_advice(message: str, assets: Dict, market: Dict, archetype: str
             f"Ideal emergency fund is 6 months of expenses. "
             f"{'As an Accumulator, keep it lean — excess cash beyond emergency fund should go to SIPs.' if archetype == 'accumulator' else 'As a Preserver, keep 25% liquid for withdrawal needs.' if archetype == 'preserver' else 'With FD rates at ' + str(market['fd_rate']) + '%, deploy excess cash into short-term FDs.'}"
         )
+    
 
+    # ── Real estate advice ────────────────────────────
+    if any(word in msg for word in ["real estate", "property", "house", "flat", "ghar", "makaan"]):
+        property_pct = round((assets.get("real_estate", 0) / (net_worth + 1)) * 100, 1)
+
+        if archetype == "accumulator":
+            return (
+                f"Your real estate is ₹{assets.get('real_estate', 0):,.0f} "
+                f"({property_pct}% of net worth). "
+                f"As an Accumulator, real estate above 20% of portfolio is over-concentrated "
+                f"in an illiquid asset. "
+                f"Before buying more property, ensure your equity allocation reaches "
+                f"the 50% target first — equity compounds faster and stays liquid."
+            )
+        elif archetype == "preserver":
+            return (
+                f"Your real estate is ₹{assets.get('real_estate', 0):,.0f} "
+                f"({property_pct}% of net worth). "
+                f"As a Preserver, property provides stable value — "
+                f"but ensure rental income covers at least EMI costs. "
+                f"Avoid new property purchases that reduce liquidity below 25% of portfolio."
+            )
+        else:
+            return (
+                f"Your real estate is ₹{assets.get('real_estate', 0):,.0f}, "
+                f"representing {property_pct}% of net worth. "
+                f"Real estate is illiquid — ensure liquid assets cover "
+                f"at least 12 months of EMIs and expenses. "
+                f"{'Heavy concentration in real estate — consider diversifying.' if property_pct > 60 else 'Allocation looks reasonable.'}"
+            )
+
+    # ── Loan / liability advice ───────────────────────
+    if any(word in msg for word in ["loan", "emi", "debt", "karj", "liability", "liabilities", "home loan", "credit"]):
+        liabilities = assets.get("liabilities", 0)
+        liquid = assets.get("liquid_cash", 0)
+        coverage_ratio = round(liquid / (liabilities + 1), 2)
+        post_tax_fd = round(market["fd_rate"] * 0.7, 2)
+
+        if archetype == "optimizer":
+            return (
+                f"Your total liabilities are ₹{liabilities:,.0f}. "
+                f"Post-tax FD return is {post_tax_fd}%. "
+                f"If your loan interest rate exceeds {post_tax_fd}%, "
+                f"prepaying the loan gives a better guaranteed return than any FD. "
+                f"For an Optimizer, check if your home loan interest qualifies "
+                f"for Section 24(b) deduction up to ₹2,00,000 — "
+                f"this changes the effective loan cost significantly."
+            )
+        elif archetype == "preserver":
+            return (
+                f"Your total liabilities are ₹{liabilities:,.0f}. "
+                f"As a Preserver, reducing debt is a priority — "
+                f"it gives a guaranteed return equal to your loan rate. "
+                f"Your liquid cash of ₹{liquid:,.0f} covers "
+                f"{coverage_ratio}x your liabilities — "
+                f"{'comfortable position.' if coverage_ratio > 0.3 else 'consider building more liquidity before prepaying.'}"
+            )
+        else:
+            return (
+                f"Your total liabilities are ₹{liabilities:,.0f}. "
+                f"With FD rates at {market['fd_rate']}% (post-tax {post_tax_fd}%), "
+                f"if your loan rate exceeds {post_tax_fd}%, prepaying beats investing in FDs. "
+                f"Liquid cash of ₹{liquid:,.0f} gives you "
+                f"{coverage_ratio}x coverage against total liabilities."
+            )
+
+    # ── Retirement advice ─────────────────────────────
+    if any(word in msg for word in ["retire", "retirement", "pension", "nps", "old age", "budhapa"]):
+        if archetype == "preserver":
+            return (
+                f"As a Preserver close to or in retirement, your focus should be "
+                f"generating stable monthly income from your ₹{net_worth:,.0f} net worth. "
+                f"Senior Citizen Savings Scheme (SCSS) offers up to 8.2% — "
+                f"consider allocating up to ₹30L here. "
+                f"Maintain at least 25% in liquid assets for healthcare and emergencies."
+            )
+        elif archetype == "accumulator":
+            return (
+                f"Retirement is far away for you — focus on compounding now. "
+                f"₹{assets.get('mutual_funds', 0):,.0f} in mutual funds growing at 12% "
+                f"for 20 years becomes ₹{int(assets.get('mutual_funds', 0) * (1.12**20)):,}. "
+                f"NPS also gives an additional ₹50,000 tax deduction under 80CCD(1B) "
+                f"while building a retirement corpus."
+            )
+        else:
+            return (
+                f"For retirement planning on a net worth of ₹{net_worth:,.0f}, "
+                f"target a corpus of 25x your annual expenses. "
+                f"NPS gives tax benefits under 80CCD(1B) — ₹50,000 additional deduction. "
+                f"Diversify between equity (for growth) and debt (for stability) "
+                f"based on your years to retirement."
+            )
+
+    # ── Tax advice asked conversationally ────────────
+    if any(word in msg for word in ["tax", "80c", "elss", "save tax", "tax saving", "itr", "deduction", "bachat"]):
+        remaining_80c = max(0, 150000 - assets.get("mutual_funds", 0) * 0.3)
+
+        if archetype == "optimizer":
+            return (
+                f"For maximum tax efficiency on ₹{net_worth:,.0f} net worth: "
+                f"fully utilize 80C (₹1,50,000 limit) via ELSS mutual funds — "
+                f"they save tax and grow your portfolio simultaneously. "
+                f"Add ₹50,000 NPS contribution for 80CCD(1B) benefit. "
+                f"Use the /api/tax/optimize endpoint for a complete rupee-by-rupee breakdown."
+            )
+        else:
+            return (
+                f"Key tax-saving options available to you: "
+                f"80C limit of ₹1,50,000 via ELSS, PPF, or life insurance. "
+                f"80D for health insurance up to ₹25,000. "
+                f"NPS under 80CCD(1B) for additional ₹50,000 beyond 80C. "
+                f"At 30% tax bracket, fully utilizing 80C alone saves ₹46,800 annually. "
+                f"For a complete analysis, use the Tax Optimizer feature."
+            )
+        
+        
     # ── Default ────────────────────────────────────────
     return (
         f"Based on your net worth of ₹{net_worth:,.0f} "

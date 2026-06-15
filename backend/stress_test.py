@@ -177,6 +177,9 @@ def run_stress_test(assets: Assets, scenario: StressScenario, market_data: Dict)
     protective_actions = _generate_protective_actions(
         scenario, impact_pct, current_values, assets
     )
+    
+    most_impacted = min(asset_impacts, key=lambda x: x["change_amount"])
+    most_impacted_asset = most_impacted["asset_class"]
 
     return {
         "scenario": scenario_config["name"],
@@ -189,7 +192,8 @@ def run_stress_test(assets: Assets, scenario: StressScenario, market_data: Dict)
         "recovery_estimate_years": scenario_config["recovery_years"],
         "severity": scenario_config["severity"],
         "ai_assessment": ai_assessment,
-        "protective_actions": protective_actions
+        "protective_actions": protective_actions,
+        "most_impacted_asset": most_impacted_asset
     }
 
 

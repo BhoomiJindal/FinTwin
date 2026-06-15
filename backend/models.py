@@ -310,6 +310,13 @@ class AssetImpact(BaseModel):
     change_amount: float
     change_pct: float
 
+class AssetStressResult(BaseModel):
+    asset_class: str
+    current_value: float
+    stressed_value: float
+    change_amount: float
+    change_pct: float
+
 class StressTestResponse(BaseModel):
     scenario: str
     scenario_description: str
@@ -317,8 +324,9 @@ class StressTestResponse(BaseModel):
     stressed_net_worth: float
     total_impact: float
     impact_pct: float
-    asset_impacts: List[AssetImpact]
+    asset_impacts: List[AssetStressResult]
+    most_impacted_asset: str
     recovery_estimate_years: float
-    severity: str               # "MODERATE", "SEVERE", "EXTREME"
+    severity: str
     ai_assessment: str
     protective_actions: List[str]

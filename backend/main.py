@@ -27,6 +27,7 @@ from typing import List
 from shadow_portfolio import calculate_divergence
 from sentiment import get_market_sentiment
 from stress_test import run_stress_test
+from session import save_session, load_session, clear_session
 
 
 # ─── SETUP ────────────────────────────────────────────
@@ -379,16 +380,19 @@ def compare_all(
 
 # ── User Personality Profiling ────────────────────────
 
-# Store current user profile in memory
-current_user_profile = {"archetype": None, "profile": None}
+# Load session on startup
+_saved_session = load_session()
+current_user_profile = _saved_session.get("user_profile", {"archetype": None, "profile": None})
 
 @app.post("/api/profile/classify", response_model=ArchetypeResponse)
 def classify_user(profile: UserProfile):
     result = get_archetype_response(profile)
 
-    # Store archetype so advisor uses it in all future responses
     current_user_profile["archetype"] = result["archetype"]
     current_user_profile["profile"] = profile.model_dump()
+
+    # Persist to file so it survives server restarts
+    save_session({"user_profile": current_user_profile})
 
     audit_log.append(AuditEntry(
         timestamp=datetime.now().isoformat(),
@@ -398,6 +402,12 @@ def classify_user(profile: UserProfile):
 
     return ArchetypeResponse(**result)
 
+@app.delete("/api/session/clear")
+def clear_session_endpoint():
+    current_user_profile["archetype"] = None
+    current_user_profile["profile"] = None
+    clear_session()
+    return {"success": True, "message": "Session cleared"}
 
 @app.get("/api/profile/current")
 def get_current_profile():
@@ -670,11 +680,16 @@ def get_audit_summary():
 @app.get("/api/market/sentiment")
 def market_sentiment():
     result = get_market_sentiment()
+    result["data_source"] = "mock_headlines_demo"
+    result["disclaimer"] = (
+        "Headlines are representative mock data for demo purposes. "
+        "Production version connects to Economic Times and Moneycontrol RSS feeds."
+    )
 
     audit_log.append(AuditEntry(
         timestamp=datetime.now().isoformat(),
         action="SENTIMENT_CHECK",
-        outcome=f"Market mood: {result['overall_mood']} — Score: {result['overall_score']}"
+        outcome=f"Market mood: {result['overall_mood']}"
     ))
 
     return result
@@ -814,3 +829,165 @@ def stress_test(request: StressTestRequest):
         ai_assessment=result["ai_assessment"],
         protective_actions=result["protective_actions"]
     )
+
+
+# ── AI Financial Summary ──────────────────────────────
+
+@app.get("/api/ai/summary")
+def get_ai_summary():
+    from advisor import get_market_context, check_shift_logic, record_market_snapshot
+    from shadow_portfolio import calculate_divergence
+    from sentiment import get_market_sentiment
+    from security import transaction_history
+
+    # Gather all context
+    twin = get_twin()
+    market = get_market_context()
+    assets_dict = twin.assets.model_dump()
+
+    record_market_snapshot(market)
+    shift_triggered, shift_rule, shift_description = check_shift_logic(market)
+
+    sentiment = get_market_sentiment()
+
+    divergence_result = calculate_divergence(
+        assets_dict,
+        twin.market_data.model_dump(),
+        None
+    )
+
+    # Goal summary
+    goals_on_track = sum(1 for g in user_goals if hasattr(g, 'name')) if user_goals else 0
+    goal_count = len(user_goals)
+
+    # Transaction summary
+    recent_blocks = sum(
+        1 for e in audit_log
+        if e.action == "TRANSACTION" and e.outcome == "BLOCK"
+    )
+
+    # Archetype context
+    archetype_label = None
+    if current_user_profile.get("archetype"):
+        from profiler import ARCHETYPES, Archetype
+        try:
+            arch = Archetype(current_user_profile["archetype"])
+            archetype_label = ARCHETYPES[arch]["label"]
+        except Exception:
+            pass
+
+    # Build one-paragraph summary
+    parts = []
+
+    # Net worth
+    parts.append(
+        f"Your current net worth is ₹{twin.net_worth:,.0f} "
+        f"across cash, mutual funds, gold, and real estate."
+    )
+
+    # Archetype context
+    if archetype_label:
+        parts.append(f"As {archetype_label}, your portfolio is being evaluated against your target allocation.")
+
+    # Divergence
+    urgency = divergence_result["urgency"]
+    div_score = divergence_result["divergence_score"]
+    if urgency == "HIGH":
+        biggest = divergence_result["biggest_gap"]
+        parts.append(
+            f"Portfolio divergence is HIGH ({div_score}/100) — "
+            f"{biggest['asset_class']} is the largest gap at "
+            f"{abs(biggest['difference'])} percentage points "
+            f"{'overweight' if biggest['difference'] > 0 else 'underweight'}."
+        )
+    elif urgency == "MEDIUM":
+        parts.append(f"Portfolio has moderate drift from ideal allocation (divergence score: {div_score}/100).")
+    else:
+        parts.append(f"Portfolio is well-aligned with target allocation (divergence score: {div_score}/100).")
+
+    # Shift logic
+    if shift_triggered:
+        parts.append(f"Active market alert: {shift_description}")
+
+    # Sentiment
+    mood = sentiment["overall_mood"]
+    parts.append(
+        f"Market sentiment is {mood.lower()} — {sentiment['mood_description'].lower()}"
+    )
+
+    # Goals
+    if goal_count > 0:
+        parts.append(
+            f"You have {goal_count} financial goal(s) tracked — "
+            f"review your goals dashboard for detailed progress."
+        )
+
+    # Security
+    if recent_blocks > 0:
+        parts.append(
+            f"Brain 02 has blocked {recent_blocks} suspicious transaction(s) "
+            f"this session — review the audit trail."
+        )
+
+    summary_paragraph = " ".join(parts)
+
+    return {
+        "summary": summary_paragraph,
+        "net_worth": twin.net_worth,
+        "divergence_score": div_score,
+        "divergence_urgency": urgency,
+        "shift_triggered": shift_triggered,
+        "shift_rule": shift_rule if shift_triggered else None,
+        "market_mood": mood,
+        "goals_tracked": goal_count,
+        "transactions_blocked_this_session": recent_blocks,
+        "archetype": archetype_label
+    }
+
+
+@app.put("/api/goals/update/{goal_index}")
+def update_goal(goal_index: int, updated_goal: Goal):
+    if goal_index < 0 or goal_index >= len(user_goals):
+        raise HTTPException(status_code=404, detail="Goal not found")
+
+    user_goals[goal_index] = updated_goal
+
+    return {
+        "success": True,
+        "message": f"Goal '{updated_goal.name}' updated",
+        "index": goal_index
+    }
+
+
+@app.delete("/api/goals/delete/{goal_index}")
+def delete_goal(goal_index: int):
+    if goal_index < 0 or goal_index >= len(user_goals):
+        raise HTTPException(status_code=404, detail="Goal not found")
+
+    deleted_name = user_goals[goal_index].name
+    user_goals.pop(goal_index)
+
+    return {
+        "success": True,
+        "message": f"Goal '{deleted_name}' deleted",
+        "remaining_goals": len(user_goals)
+    }
+
+
+@app.get("/api/goals/list")
+def list_goals():
+    return {
+        "goals": [
+            {
+                "index": i,
+                "name": g.name,
+                "category": g.category,
+                "target_amount": g.target_amount,
+                "current_saved": g.current_saved,
+                "monthly_contribution": g.monthly_contribution,
+                "target_years": g.target_years
+            }
+            for i, g in enumerate(user_goals)
+        ],
+        "total": len(user_goals)
+    }
